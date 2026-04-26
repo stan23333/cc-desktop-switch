@@ -16,9 +16,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend import config as cfg
+from backend import ccswitch_import
 from backend import provider_tools
 from backend import registry
 from backend import update as updater
+from backend.api_adapters import normalize_api_format
 from backend.proxy import (
     build_upstream_url,
     create_proxy_app,
@@ -60,7 +62,13 @@ def _parse_inference_models(raw_value: str) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
-def _desktop_health(desktop_status: dict, proxy_port: int, provider: Optional[dict]) -> dict:
+def _desktop_health(
+    desktop_status: dict,
+    proxy_port: int,
+    provider: Optional[dict],
+    providers: Optional[list[dict]] = None,
+    expose_all: bool = False,
+) -> dict:
     """判断 Claude Desktop 配置是否仍指向本工具当前 provider。"""
     keys = desktop_status.get("keys") or {}
     expected_base_url = f"http://127.0.0.1:{proxy_port}"
@@ -80,23 +88,15 @@ def _desktop_health(desktop_status: dict, proxy_port: int, provider: Optional[di
         })
 
     inference_models = _parse_inference_models(str(keys.get("inferenceModels") or ""))
-    provider_models = provider.get("models", {}) if provider else {}
-    model_capabilities = provider.get("modelCapabilities", {}) if provider else {}
-    if not isinstance(model_capabilities, dict):
-        model_capabilities = {}
+    target_models = (
+        registry.all_provider_inference_models(providers or [])
+        if expose_all
+        else registry.provider_inference_models(provider)
+    )
     one_million_models = [
-        str(model_id)
-        for model_id in provider_models.values()
-        if (
-            isinstance(model_id, str)
-            and (
-                "[1m]" in model_id.lower()
-                or (
-                    isinstance(model_capabilities.get(model_id), dict)
-                    and model_capabilities[model_id].get("supports1m") is True
-                )
-            )
-        )
+        str(item.get("name"))
+        for item in target_models
+        if isinstance(item, dict) and item.get("supports1m") is True and item.get("name")
     ]
     one_million_ready = True
     if one_million_models:
@@ -135,10 +135,14 @@ def _sync_desktop_for_active_provider() -> dict:
         return {"attempted": False, "success": True, "message": "Claude 桌面版尚未由本工具配置"}
 
     proxy_port = cfg.get_settings().get("proxyPort", 18080)
+    settings = cfg.get_settings()
+    expose_all = bool(settings.get("exposeAllProviderModels"))
     result = registry.apply_config(
         f"http://127.0.0.1:{proxy_port}",
         gateway_api_key=cfg.get_or_create_gateway_api_key(),
         provider=provider,
+        providers=cfg.get_providers() if expose_all else None,
+        expose_all=expose_all,
     )
     return {
         "attempted": True,
@@ -158,7 +162,7 @@ def _provider_test_model(provider: dict) -> str:
 
 def _provider_test_body(provider: dict, api_format: str) -> dict:
     model = _provider_test_model(provider)
-    if api_format == "openai":
+    if api_format == "openai_chat":
         return {
             "model": model,
             "messages": [{"role": "user", "content": "ping"}],
@@ -180,7 +184,7 @@ def _is_kimi_provider(provider: dict) -> bool:
 
 async def _test_provider_connection(provider: dict) -> dict:
     """测试 provider 是否能真实访问上游接口。"""
-    api_format = str(provider.get("apiFormat", "anthropic")).lower()
+    api_format = normalize_api_format(provider.get("apiFormat", "anthropic"))
     base_url = build_upstream_url(provider.get("baseUrl", ""), api_format)
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -244,9 +248,58 @@ async def _test_provider_connection(provider: dict) -> dict:
     }
 
 
+def _provider_compatibility(provider: dict) -> dict:
+    """返回 provider 第三方接口兼容性摘要，不发起网络请求。"""
+    api_format = normalize_api_format(provider.get("apiFormat", "anthropic"))
+    if api_format == "anthropic":
+        return {
+            "id": provider.get("id"),
+            "name": provider.get("name"),
+            "apiFormat": api_format,
+            "level": "stable",
+            "message": "Anthropic 兼容接口，适合 Claude 桌面版主流程。",
+            "checks": {
+                "models": True,
+                "text": True,
+                "stream": True,
+                "tools": True,
+                "streamingTools": True,
+            },
+        }
+    if api_format == "openai_chat":
+        return {
+            "id": provider.get("id"),
+            "name": provider.get("name"),
+            "apiFormat": api_format,
+            "level": "experimental",
+            "message": "OpenAI Chat 实验适配：文本和非流式工具调用可测试，流式工具调用暂不作为稳定能力。",
+            "checks": {
+                "models": True,
+                "text": True,
+                "stream": True,
+                "tools": True,
+                "streamingTools": False,
+            },
+        }
+    return {
+        "id": provider.get("id"),
+        "name": provider.get("name"),
+        "apiFormat": api_format,
+        "level": "unsupported",
+        "message": f"{api_format} 暂未适配。",
+        "checks": {
+            "models": False,
+            "text": False,
+            "stream": False,
+            "tools": False,
+            "streamingTools": False,
+        },
+    }
+
+
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.9")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.10")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
@@ -279,7 +332,9 @@ def create_admin_app() -> FastAPI:
         providers = cfg.get_providers()
         active = cfg.get_active_provider()
         desktop_status = registry.get_config_status()
-        proxy_port = cfg.get_settings().get("proxyPort", 18080)
+        settings = cfg.get_settings()
+        proxy_port = settings.get("proxyPort", 18080)
+        expose_all = bool(settings.get("exposeAllProviderModels"))
 
         return {
             "desktopConfigured": desktop_status.get("configured", False),
@@ -288,7 +343,8 @@ def create_admin_app() -> FastAPI:
             "activeProvider": _public_provider(active),
             "activeProviderId": active["id"] if active else None,
             "providerCount": len(providers),
-            "desktopHealth": _desktop_health(desktop_status, proxy_port, active),
+            "desktopHealth": _desktop_health(desktop_status, proxy_port, active, providers, expose_all),
+            "exposeAllProviderModels": expose_all,
         }
 
     # ── 提供商 API ──
@@ -412,6 +468,16 @@ def create_admin_app() -> FastAPI:
             return _provider_not_found()
         return await provider_tools.query_provider_usage(provider)
 
+    @app.get("/api/providers/compatibility")
+    async def provider_compatibility_report():
+        """查看已保存 provider 的第三方接口兼容性摘要。"""
+        providers = [_provider_compatibility(provider) for provider in cfg.get_providers()]
+        return {
+            "success": True,
+            "providers": providers,
+            "experimentalCount": len([item for item in providers if item["level"] == "experimental"]),
+        }
+
     # ── 模型映射 API ──
     @app.get("/api/providers/{provider_id}/models")
     async def get_models(provider_id: str):
@@ -499,13 +565,63 @@ def create_admin_app() -> FastAPI:
             "backup": result["backup"],
         }
 
+    # ── CC-Switch 导入 API ──
+    @app.get("/api/ccswitch/status")
+    async def get_ccswitch_status():
+        """检测本机 CC-Switch 配置。不会返回 API Key。"""
+        return {"success": True, **ccswitch_import.status()}
+
+    @app.get("/api/ccswitch/providers")
+    async def get_ccswitch_providers():
+        """预览可从 CC-Switch 导入的 Claude provider。API Key 只返回掩码。"""
+        try:
+            providers = ccswitch_import.read_providers()
+        except ccswitch_import.CcSwitchImportError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": str(exc)},
+            )
+        return {
+            "success": True,
+            "providers": providers,
+            "supportedCount": len([item for item in providers if item.get("supported")]),
+            "unsupportedCount": len([item for item in providers if not item.get("supported")]),
+        }
+
+    @app.post("/api/ccswitch/import")
+    async def import_ccswitch_providers(request: Request):
+        """把 CC-Switch 的 Anthropic 兼容 provider 导入本工具。"""
+        data = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        try:
+            result = ccswitch_import.import_providers(
+                ids=data.get("ids"),
+                set_default=bool(data.get("setDefault")),
+            )
+        except ccswitch_import.CcSwitchImportError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": str(exc)},
+            )
+        return {
+            "success": True,
+            "message": f"已导入 {len(result['imported'])} 个 CC-Switch 配置",
+            **result,
+        }
+
     # ── Desktop 集成 API ──
     @app.get("/api/desktop/status")
     async def get_desktop_status():
         """获取 Desktop 注册表配置状态"""
         status = registry.get_config_status()
-        proxy_port = cfg.get_settings().get("proxyPort", 18080)
-        status["health"] = _desktop_health(status, proxy_port, cfg.get_active_provider())
+        settings = cfg.get_settings()
+        proxy_port = settings.get("proxyPort", 18080)
+        status["health"] = _desktop_health(
+            status,
+            proxy_port,
+            cfg.get_active_provider(),
+            cfg.get_providers(),
+            bool(settings.get("exposeAllProviderModels")),
+        )
         return status
 
     @app.post("/api/desktop/configure")
@@ -516,10 +632,14 @@ def create_admin_app() -> FastAPI:
         base_url = f"http://127.0.0.1:{proxy_port}"
         gateway_api_key = cfg.get_or_create_gateway_api_key()
         active_provider = cfg.get_active_provider()
+        settings = cfg.get_settings()
+        expose_all = bool(settings.get("exposeAllProviderModels"))
         return registry.apply_config(
             base_url,
             gateway_api_key=gateway_api_key,
             provider=active_provider,
+            providers=cfg.get_providers() if expose_all else None,
+            expose_all=expose_all,
         )
 
     @app.post("/api/desktop/clear")

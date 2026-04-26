@@ -2,6 +2,7 @@ import copy
 import asyncio
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 from backend.main import _desktop_health, _test_provider_connection, create_admin_app
 from main import DesktopTrayController
 from backend import config as cfg
+from backend import ccswitch_import
 from backend import provider_tools
 from backend import registry
 from backend import update as updater
@@ -19,6 +21,7 @@ from backend.proxy import (
     _anthropic_to_openai_body,
     _normalize_anthropic_response,
     _normalize_anthropic_sse_event,
+    _openai_to_anthropic,
     _openai_chunk_to_anthropic,
     apply_anthropic_request_options,
     build_upstream_url,
@@ -215,6 +218,43 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertTrue(by_name["qwen3.6-plus"]["supports1m"])
         self.assertTrue(by_name["qwen3.6-flash"]["supports1m"])
         self.assertNotIn("supports1m", by_name["qwen3.6-max-preview"])
+
+    def test_all_provider_inference_models_use_provider_aliases_and_keep_1m(self):
+        providers = [
+            {
+                "id": "deepseek",
+                "name": "DeepSeek",
+                "models": {
+                    "sonnet": "deepseek-v4-pro[1m]",
+                    "haiku": "deepseek-v4-flash",
+                    "default": "deepseek-v4-pro[1m]",
+                },
+                "modelCapabilities": {
+                    "deepseek-v4-pro[1m]": {"supports1m": True},
+                },
+            },
+            {
+                "id": "kimi",
+                "name": "Kimi",
+                "models": {
+                    "sonnet": "kimi-k2.6",
+                    "default": "kimi-k2.6",
+                },
+            },
+        ]
+
+        models = registry.all_provider_inference_models(providers)
+
+        self.assertIn(
+            {
+                "name": "deepseek/deepseek-v4-pro[1m]",
+                "displayName": "DeepSeek / deepseek-v4-pro[1m]",
+                "supports1m": True,
+            },
+            models,
+        )
+        self.assertIn({"name": "kimi/kimi-k2.6", "displayName": "Kimi / kimi-k2.6"}, models)
+        self.assertNotIn({"name": "deepseek-v4-pro[1m]", "displayName": "deepseek-v4-pro[1m]"}, models)
 
     def test_windows_registry_apply_falls_back_to_elevated_helper_when_key_is_not_writable(self):
         if not hasattr(registry, "_win_apply_config"):
@@ -747,6 +787,228 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertTrue(ready["oneMillionReady"])
 
 
+class CcSwitchImportTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.ccswitch_dir = Path(self.temp_dir.name) / ".cc-switch"
+        self.ccswitch_dir.mkdir()
+        self.db_path = self.ccswitch_dir / "cc-switch.db"
+        self.old_config_dir = cfg.CONFIG_DIR
+        self.old_config_file = cfg.CONFIG_FILE
+        self.old_backup_dir = cfg.BACKUP_DIR
+        cfg.CONFIG_DIR = os.path.join(self.temp_dir.name, "ccds")
+        cfg.CONFIG_FILE = os.path.join(cfg.CONFIG_DIR, "config.json")
+        cfg.BACKUP_DIR = os.path.join(cfg.CONFIG_DIR, "backups")
+        cfg.save_config(copy.deepcopy(cfg.DEFAULT_CONFIG))
+        self._init_ccswitch_db()
+
+    def tearDown(self):
+        cfg.CONFIG_DIR = self.old_config_dir
+        cfg.CONFIG_FILE = self.old_config_file
+        cfg.BACKUP_DIR = self.old_backup_dir
+        self.temp_dir.cleanup()
+
+    def _init_ccswitch_db(self):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute(
+                """
+                CREATE TABLE providers (
+                    id TEXT PRIMARY KEY,
+                    app_type TEXT,
+                    name TEXT,
+                    settings_config TEXT,
+                    meta TEXT,
+                    is_current INTEGER,
+                    sort_index INTEGER,
+                    created_at INTEGER
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _insert_ccswitch_provider(self, provider_id, name, env, meta=None, app_type="claude", current=False):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute(
+                """
+                INSERT INTO providers
+                    (id, app_type, name, settings_config, meta, is_current, sort_index, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    provider_id,
+                    app_type,
+                    name,
+                    json.dumps({"env": env}),
+                    json.dumps(meta or {}),
+                    1 if current else 0,
+                    0,
+                    1,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def test_preview_reads_anthropic_provider_without_exposing_secret(self):
+        self._insert_ccswitch_provider(
+            "deepseek",
+            "DeepSeek",
+            {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "sk-test-secret",
+                "ANTHROPIC_MODEL": "deepseek-v4-pro",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-v4-flash",
+            },
+            {"apiFormat": "anthropic"},
+            current=True,
+        )
+
+        providers = ccswitch_import.read_providers(root=self.ccswitch_dir)
+
+        self.assertEqual(len(providers), 1)
+        provider = providers[0]
+        self.assertTrue(provider["supported"])
+        self.assertTrue(provider["hasApiKey"])
+        self.assertEqual(provider["apiKeyPreview"], "sk-t...cret")
+        self.assertNotIn("apiKey", provider)
+        self.assertEqual(provider["baseUrl"], "https://api.deepseek.com/anthropic")
+        self.assertEqual(provider["models"]["default"], "deepseek-v4-pro")
+        self.assertEqual(provider["models"]["haiku"], "deepseek-v4-flash")
+
+    def test_preview_skips_openai_formats_and_local_proxy_urls(self):
+        self._insert_ccswitch_provider(
+            "openai",
+            "OpenAI Like",
+            {
+                "ANTHROPIC_BASE_URL": "https://api.example.com/v1",
+                "ANTHROPIC_AUTH_TOKEN": "sk-test-secret",
+                "ANTHROPIC_MODEL": "example-model",
+            },
+            {"apiFormat": "openai_chat"},
+        )
+        self._insert_ccswitch_provider(
+            "local",
+            "Local Proxy",
+            {
+                "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+                "ANTHROPIC_AUTH_TOKEN": "sk-test-secret",
+                "ANTHROPIC_MODEL": "local-model",
+            },
+            {"apiFormat": "anthropic"},
+        )
+
+        providers = {provider["id"]: provider for provider in ccswitch_import.read_providers(root=self.ccswitch_dir)}
+
+        self.assertFalse(providers["openai"]["supported"])
+        self.assertIn("OpenAI Chat", providers["openai"]["reason"])
+        self.assertFalse(providers["local"]["supported"])
+        self.assertIn("本机代理地址", providers["local"]["reason"])
+
+    def test_import_adds_supported_only_and_creates_backup(self):
+        self._insert_ccswitch_provider(
+            "deepseek",
+            "DeepSeek",
+            {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "sk-test-secret",
+                "ANTHROPIC_MODEL": "deepseek-v4-pro",
+            },
+            {"apiFormat": "anthropic"},
+        )
+        self._insert_ccswitch_provider(
+            "openai",
+            "OpenAI Like",
+            {
+                "ANTHROPIC_BASE_URL": "https://api.example.com/v1",
+                "ANTHROPIC_AUTH_TOKEN": "sk-openai-secret",
+                "ANTHROPIC_MODEL": "example-model",
+            },
+            {"apiFormat": "openai_responses"},
+        )
+
+        result = ccswitch_import.import_providers(root=self.ccswitch_dir)
+        providers = cfg.get_providers()
+
+        self.assertEqual(len(result["imported"]), 1)
+        self.assertEqual(len(providers), 1)
+        self.assertEqual(providers[0]["name"], "DeepSeek")
+        self.assertEqual(providers[0]["apiFormat"], "anthropic")
+        self.assertEqual(providers[0]["extraHeaders"], {"x-api-key": "{apiKey}"})
+        self.assertEqual(providers[0]["source"], {"type": "cc-switch", "id": "deepseek"})
+        self.assertIsNotNone(result["backup"])
+        self.assertTrue(os.path.exists(os.path.join(cfg.BACKUP_DIR, result["backup"]["name"])))
+
+    def test_import_renames_same_vendor_without_overwriting_existing_provider(self):
+        cfg.add_provider({
+            "id": "manual-deepseek",
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "apiKey": "manual-secret",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        })
+        self._insert_ccswitch_provider(
+            "deepseek",
+            "DeepSeek",
+            {
+                "ANTHROPIC_BASE_URL": "https://api.deepseek.com/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "sk-test-secret",
+                "ANTHROPIC_MODEL": "deepseek-v4-pro",
+            },
+            {"apiFormat": "anthropic"},
+        )
+
+        first = ccswitch_import.import_providers(root=self.ccswitch_dir)
+        second = ccswitch_import.import_providers(root=self.ccswitch_dir)
+        providers = cfg.get_providers()
+        names = [provider["name"] for provider in providers]
+
+        self.assertEqual(first["imported"][0]["name"], "DeepSeek CC Switch 导入")
+        self.assertEqual(second["imported"], [])
+        self.assertEqual(second["skipped"][0]["reason"], "已导入过这个 CC-Switch 配置")
+        self.assertEqual(len(providers), 2)
+        self.assertIn("DeepSeek", names)
+        self.assertIn("DeepSeek CC Switch 导入", names)
+        self.assertEqual(cfg.get_provider("manual-deepseek")["apiKey"], "manual-secret")
+
+    def test_admin_routes_preview_masks_secret_and_import_requires_local_header(self):
+        self._insert_ccswitch_provider(
+            "zhipu",
+            "智谱 GLM",
+            {
+                "ANTHROPIC_BASE_URL": "https://open.bigmodel.cn/api/anthropic",
+                "ANTHROPIC_AUTH_TOKEN": "sk-zhipu-secret",
+                "ANTHROPIC_MODEL": "glm-4.7",
+            },
+            {"apiFormat": "anthropic"},
+        )
+        client = TestClient(create_admin_app())
+
+        with patch("backend.main.ccswitch_import.CCSWITCH_DIR", self.ccswitch_dir):
+            status_response = client.get("/api/ccswitch/status")
+            preview_response = client.get("/api/ccswitch/providers")
+            blocked_import = client.post("/api/ccswitch/import", json={"ids": ["zhipu"]})
+            import_response = client.post(
+                "/api/ccswitch/import",
+                headers={"x-ccds-request": "1"},
+                json={"ids": ["zhipu"]},
+            )
+
+        self.assertEqual(status_response.status_code, 200)
+        self.assertTrue(status_response.json()["found"])
+        self.assertEqual(preview_response.status_code, 200)
+        preview = preview_response.json()["providers"][0]
+        self.assertNotIn("apiKey", preview)
+        self.assertEqual(preview["apiKeyPreview"], "sk-z...cret")
+        self.assertEqual(blocked_import.status_code, 403)
+        self.assertEqual(import_response.status_code, 200)
+        self.assertEqual(import_response.json()["imported"][0]["name"], "智谱 GLM")
+
+
 class ProviderToolsTests(unittest.TestCase):
     def test_model_endpoint_candidates_handle_common_url_shapes(self):
         openai = provider_tools.model_endpoint_candidates({
@@ -1107,6 +1369,62 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(apply_config.call_args.kwargs["provider"]["models"]["sonnet"], "kimi-k2.6")
         self.assertEqual(cfg.load_config()["activeProvider"], second["id"])
 
+    def test_set_default_provider_syncs_all_models_when_expose_all_is_enabled(self):
+        first = cfg.add_provider({
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "deepseek-v4-pro[1m]", "default": "deepseek-v4-pro[1m]"},
+        })
+        second = cfg.add_provider({
+            "id": "kimi",
+            "name": "Kimi",
+            "baseUrl": "https://api.moonshot.cn/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "kimi-k2.6", "default": "kimi-k2.6"},
+        })
+        cfg.update_settings({"exposeAllProviderModels": True})
+
+        with patch("backend.main.registry.get_config_status", return_value={"configured": True}):
+            with patch("backend.main.registry.apply_config", return_value={"success": True}) as apply_config:
+                response = self.client.put(
+                    f"/api/providers/{second['id']}/default",
+                    headers={"x-ccds-request": "1"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["desktopSync"]["attempted"])
+        self.assertTrue(apply_config.call_args.kwargs["expose_all"])
+        self.assertEqual(
+            [item["id"] for item in apply_config.call_args.kwargs["providers"]],
+            [first["id"], second["id"]],
+        )
+
+    def test_provider_compatibility_report_marks_openai_as_experimental(self):
+        cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        })
+        cfg.add_provider({
+            "name": "Custom OpenAI",
+            "baseUrl": "https://api.example.com/v1",
+            "authScheme": "bearer",
+            "apiFormat": "openai_chat",
+        })
+
+        response = self.client.get("/api/providers/compatibility", headers={"x-ccds-request": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        by_name = {item["name"]: item for item in response.json()["providers"]}
+        self.assertEqual(by_name["DeepSeek"]["level"], "stable")
+        self.assertEqual(by_name["Custom OpenAI"]["level"], "experimental")
+        self.assertFalse(by_name["Custom OpenAI"]["checks"]["streamingTools"])
+
     def test_update_install_does_not_launch_when_current_version_is_latest(self):
         async def fake_download_update(url, current_version, platform="windows-x64", target_dir=None):
             return {
@@ -1138,11 +1456,11 @@ class AdminApiTests(unittest.TestCase):
                 "success": True,
                 "updateAvailable": True,
                 "currentVersion": current_version,
-                "latestVersion": "1.0.9",
+                "latestVersion": "1.0.11",
                 "platform": platform,
                 "assets": [],
                 "downloaded": True,
-                "installerPath": r"C:\Temp\CC-Desktop-Switch-v1.0.9-Windows-Setup.exe",
+                "installerPath": r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe",
             }
 
         with patch("backend.main.updater.download_update", fake_download_update):
@@ -1156,7 +1474,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["installerStarted"])
         popen.assert_called_once_with(
-            [r"C:\Temp\CC-Desktop-Switch-v1.0.9-Windows-Setup.exe"],
+            [r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe"],
             close_fds=True,
         )
 
@@ -1205,6 +1523,79 @@ class ProxyConversionTests(unittest.TestCase):
         self.assertEqual(converted["messages"][0], {"role": "system", "content": "Be brief."})
         self.assertEqual(converted["messages"][1], {"role": "user", "content": "Hello\nWorld"})
         self.assertIsInstance(body["messages"][0]["content"], list)
+
+    def test_anthropic_to_openai_body_converts_tools_and_tool_results(self):
+        body = {
+            "model": "custom-model",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "I will call a tool."},
+                        {"type": "tool_use", "id": "toolu_1", "name": "read_file", "input": {"path": "README.md"}},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"},
+                    ],
+                },
+            ],
+            "tools": [
+                {
+                    "name": "read_file",
+                    "description": "Read a file",
+                    "input_schema": {"type": "object", "properties": {"path": {"type": "string"}}},
+                }
+            ],
+            "tool_choice": {"type": "any"},
+        }
+
+        converted = _anthropic_to_openai_body(body, stream=False)
+
+        self.assertEqual(converted["tools"][0]["function"]["name"], "read_file")
+        self.assertEqual(converted["tool_choice"], "required")
+        self.assertEqual(converted["messages"][0]["tool_calls"][0]["id"], "toolu_1")
+        self.assertEqual(
+            json.loads(converted["messages"][0]["tool_calls"][0]["function"]["arguments"]),
+            {"path": "README.md"},
+        )
+        self.assertEqual(converted["messages"][1], {"role": "tool", "tool_call_id": "toolu_1", "content": "ok"})
+
+    def test_openai_response_converts_tool_calls_and_usage_to_anthropic(self):
+        response = _openai_to_anthropic({
+            "id": "chatcmpl_1",
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "search", "arguments": "{\"q\":\"hello\"}"},
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 3},
+        }, "custom-model")
+
+        self.assertEqual(response["stop_reason"], "tool_use")
+        self.assertEqual(response["usage"], {"input_tokens": 11, "output_tokens": 3})
+        self.assertEqual(response["content"][0]["type"], "tool_use")
+        self.assertEqual(response["content"][0]["input"], {"q": "hello"})
+
+    def test_openai_streaming_tool_calls_return_clear_experimental_error(self):
+        event = _openai_chunk_to_anthropic({
+            "choices": [{
+                "delta": {"tool_calls": [{"id": "call_1"}]},
+                "finish_reason": None,
+            }]
+        }, "custom-model")
+
+        self.assertEqual(event["type"], "error")
+        self.assertEqual(event["error"]["type"], "unsupported_streaming_tool_call")
 
     def test_map_model_preserves_exact_gateway_model_ids(self):
         provider = {
@@ -1363,6 +1754,93 @@ class ProxyAppTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 401)
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(allowed.json()["data"][0]["id"], "deepseek-v4-pro[1m]")
+
+    def test_models_endpoint_returns_all_provider_aliases_when_enabled(self):
+        cfg.add_provider({
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "apiKey": "deepseek-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {
+                "sonnet": "deepseek-v4-pro[1m]",
+                "haiku": "deepseek-v4-flash",
+                "default": "deepseek-v4-pro[1m]",
+            },
+            "modelCapabilities": {"deepseek-v4-pro[1m]": {"supports1m": True}},
+        })
+        cfg.add_provider({
+            "id": "kimi",
+            "name": "Kimi",
+            "baseUrl": "https://api.moonshot.cn/anthropic",
+            "apiKey": "kimi-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "kimi-k2.6", "default": "kimi-k2.6"},
+        })
+        config = cfg.load_config()
+        config["gatewayApiKey"] = "local-gateway-key"
+        cfg.save_config(config)
+        cfg.update_settings({"exposeAllProviderModels": True})
+
+        response = self.client.get("/v1/models", headers={"authorization": "Bearer local-gateway-key"})
+
+        self.assertEqual(response.status_code, 200)
+        by_id = {item["id"]: item for item in response.json()["data"]}
+        self.assertTrue(by_id["deepseek/deepseek-v4-pro[1m]"]["supports1m"])
+        self.assertEqual(by_id["kimi/kimi-k2.6"]["display_name"], "Kimi / kimi-k2.6")
+
+    def test_messages_endpoint_routes_alias_model_to_matching_provider(self):
+        cfg.add_provider({
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "apiKey": "deepseek-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "deepseek-v4-pro", "default": "deepseek-v4-pro"},
+        })
+        cfg.add_provider({
+            "id": "kimi",
+            "name": "Kimi",
+            "baseUrl": "https://api.moonshot.cn/anthropic",
+            "apiKey": "kimi-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "kimi-k2.6", "default": "kimi-k2.6"},
+        })
+        config = cfg.load_config()
+        config["gatewayApiKey"] = "local-gateway-key"
+        cfg.save_config(config)
+        cfg.update_settings({"exposeAllProviderModels": True})
+        observed = {}
+
+        async def fake_forward_request(body, provider, _request_id):
+            observed["model"] = body["model"]
+            observed["provider"] = provider["id"]
+            return {
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "model": body["model"],
+                "content": [{"type": "text", "text": "ok"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+
+        with patch("backend.proxy.forward_request", fake_forward_request):
+            response = self.client.post(
+                "/v1/messages",
+                headers={"authorization": "Bearer local-gateway-key"},
+                json={
+                    "model": "kimi/kimi-k2.6",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_tokens": 8,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(observed, {"model": "kimi-k2.6", "provider": "kimi"})
 
     def test_messages_endpoint_rejects_when_gateway_key_has_not_been_created(self):
         cfg.add_provider({
@@ -1739,6 +2217,57 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn("toast.defaultUpdatedDesktop", app_js + i18n)
         self.assertIn("restartReminder.dontShow", i18n)
         self.assertIn("confirm.installUpdate", app_js + i18n)
+        self.assertIn('class="panel model-menu-mode-panel" hidden aria-hidden="true"', html)
+        self.assertIn('class="settings-row" hidden aria-hidden="true"', html)
+        self.assertIn('data-action="toggle-model-menu-mode"', html)
+        self.assertIn("renderModelMenuModeState", app_js)
+        self.assertIn("providers.showAllModels", i18n)
+
+    def test_third_party_compatibility_ui_is_folded_and_marked_experimental(self):
+        html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")
+        css = (self.root / "frontend" / "css" / "style.css").read_text(encoding="utf-8")
+        app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        api_js = (self.root / "frontend" / "js" / "api.js").read_text(encoding="utf-8")
+        i18n = (self.root / "frontend" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+        self.assertIn('class="advanced-provider-options" open', html)
+        self.assertIn('compat-chevron', html + css)
+        self.assertIn("border: 2px solid #ef4444", css)
+        self.assertIn('data-api-format="anthropic"', html)
+        self.assertIn('data-api-format="openai_chat"', html)
+        self.assertIn('data-action="check-provider-compatibility"', html)
+        self.assertIn('id="providerCompatibilityList"', html)
+        self.assertIn("format-choice-button.active", css)
+        self.assertIn("compatibility-item.experimental", css)
+        self.assertIn("getProviderCompatibility", api_js)
+        self.assertIn("renderProviderCompatibilityList", app_js)
+        self.assertIn("OpenAI Chat 属于实验适配", html + i18n)
+        self.assertIn("toast.openaiFormatExperimental", app_js + i18n)
+
+    def test_ccswitch_import_ui_is_isolated_and_marks_openai_as_skipped(self):
+        html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")
+        css = (self.root / "frontend" / "css" / "style.css").read_text(encoding="utf-8")
+        app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        api_js = (self.root / "frontend" / "js" / "api.js").read_text(encoding="utf-8")
+        i18n = (self.root / "frontend" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+        self.assertIn('data-action="detect-ccswitch"', html)
+        self.assertIn('data-action="import-ccswitch"', html)
+        self.assertIn('data-action="open-ccswitch-import"', html)
+        self.assertIn('id="ccSwitchImportSection"', html)
+        self.assertIn('id="ccSwitchImportList"', html)
+        self.assertIn("ccswitch-import-item", css)
+        self.assertIn("focusCcSwitchImportSection", app_js)
+        self.assertIn("getCcSwitchProviders", api_js)
+        self.assertIn("importCcSwitchProviders", app_js + api_js)
+        self.assertIn("refreshCcSwitchImportStatus", app_js)
+        self.assertIn("只导入 Anthropic 兼容配置", html + i18n)
+        self.assertIn("OpenAI 格式会显示为暂不导入", html + i18n)
+        self.assertIn("confirm.ccswitchImport", app_js + i18n)
+        self.assertIn("不会覆盖现有提供商", i18n)
+        self.assertIn("不会修改 CC-Switch", i18n)
+        self.assertIn("转发状态", html + i18n)
+        self.assertNotIn("代理控制台", html + i18n)
 
 
 if __name__ == "__main__":

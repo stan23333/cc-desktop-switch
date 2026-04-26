@@ -9,6 +9,19 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from backend.api_adapters import (
+    anthropic_to_openai_chat_body,
+    content_to_text,
+    normalize_api_format,
+    openai_chat_chunk_to_anthropic,
+    openai_chat_to_anthropic,
+)
+from backend.model_alias import (
+    all_provider_model_entries,
+    provider_model_ids as alias_provider_model_ids,
+    resolve_model_alias,
+)
+
 # 标准 Claude 模型名列表（用于匹配和显示）
 CLAUDE_MODEL_NAMES = {
     "sonnet": [
@@ -27,31 +40,34 @@ CLAUDE_MODEL_NAMES = {
 
 def provider_model_ids(provider: Optional[dict]) -> list:
     """返回当前 provider 暴露给 Claude Desktop 的真实模型 ID。"""
-    if not provider:
-        return []
-    models = provider.get("models") or {}
-    if not isinstance(models, dict):
-        return []
-    ordered = []
-    for key in ("default", "sonnet", "opus", "haiku"):
-        model_id = str(models.get(key) or "").strip()
-        if model_id and model_id not in ordered:
-            ordered.append(model_id)
-    return ordered
+    return alias_provider_model_ids(provider)
 
 
-def gateway_models_response(provider: Optional[dict]) -> dict:
+def gateway_models_response(
+    provider: Optional[dict],
+    providers: Optional[list[dict]] = None,
+    expose_all: bool = False,
+) -> dict:
     """生成 Anthropic /v1/models 风格的模型列表响应。"""
-    model_ids = provider_model_ids(provider)
-    data = [
-        {
+    if expose_all:
+        entries = all_provider_model_entries(providers or [])
+    else:
+        entries = [
+            {"name": model_id, "displayName": model_id}
+            for model_id in provider_model_ids(provider)
+        ]
+    data = []
+    for item in entries:
+        model_id = item["name"]
+        row = {
             "type": "model",
             "id": model_id,
-            "display_name": model_id,
+            "display_name": item.get("displayName") or model_id,
             "created_at": "2024-01-01T00:00:00Z",
         }
-        for model_id in model_ids
-    ]
+        if item.get("supports1m") is True:
+            row["supports1m"] = True
+        data.append(row)
     return {
         "data": data,
         "has_more": False,
@@ -164,9 +180,9 @@ def build_upstream_url(base_url: str, api_format: str) -> str:
     避免重复拼接 /v1/messages 或 /chat/completions。
     """
     clean = str(base_url or "").strip().rstrip("/")
-    api_format = str(api_format or "anthropic").lower()
+    api_format = normalize_api_format(api_format)
     lower = clean.lower()
-    if api_format == "openai":
+    if api_format == "openai_chat":
         if lower.endswith("/chat/completions"):
             return clean
         return f"{clean}/chat/completions"
@@ -179,60 +195,12 @@ def build_upstream_url(base_url: str, api_format: str) -> str:
 
 def _content_to_text(content) -> str:
     """把 Anthropic 文本块转换为 OpenAI 兼容接口常见的字符串 content。"""
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                if isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-                elif isinstance(item.get("content"), str):
-                    parts.append(item["content"])
-                elif isinstance(item.get("content"), list):
-                    text = _content_to_text(item["content"])
-                    if text:
-                        parts.append(text)
-        return "\n".join(part for part in parts if part)
-    return str(content)
+    return content_to_text(content)
 
 
 def _anthropic_to_openai_body(body: dict, stream: bool) -> dict:
     """将 Claude Desktop 发来的 Anthropic Messages 请求转换为 OpenAI Chat。"""
-    messages = [dict(message) for message in body.get("messages", [])]
-    system_msg = body.get("system")
-    if not system_msg and messages and messages[0].get("role") == "system":
-        system_msg = messages.pop(0).get("content")
-
-    openai_messages = []
-    system_text = _content_to_text(system_msg)
-    if system_text:
-        openai_messages.append({"role": "system", "content": system_text})
-
-    for message in messages:
-        role = message.get("role", "user")
-        if role not in {"system", "user", "assistant", "tool"}:
-            role = "user"
-        content = _content_to_text(message.get("content"))
-        openai_messages.append({"role": role, "content": content})
-
-    openai_body = {
-        "model": body.get("model", ""),
-        "messages": openai_messages,
-        "max_tokens": body.get("max_tokens", 4096),
-        "stream": stream,
-    }
-    if "temperature" in body and body["temperature"] is not None:
-        openai_body["temperature"] = body["temperature"]
-    if "top_p" in body and body["top_p"] is not None:
-        openai_body["top_p"] = body["top_p"]
-    if body.get("stop_sequences"):
-        openai_body["stop"] = body["stop_sequences"]
-    return openai_body
+    return anthropic_to_openai_chat_body(body, stream)
 
 
 def get_upstream_headers(provider: dict) -> dict:
@@ -245,7 +213,7 @@ def get_upstream_headers(provider: dict) -> dict:
         "Accept": "application/json",
     }
 
-    if str(provider.get("apiFormat", "anthropic")).lower() == "anthropic":
+    if normalize_api_format(provider.get("apiFormat", "anthropic")) == "anthropic":
         headers["anthropic-version"] = "2023-06-01"
 
     if api_key:
@@ -401,9 +369,9 @@ async def forward_request(
     request_id: str,
 ) -> dict:
     """转发请求到上游 API（非流式）"""
-    api_format = str(provider.get("apiFormat", "anthropic")).lower()
+    api_format = normalize_api_format(provider.get("apiFormat", "anthropic"))
 
-    if api_format == "openai":
+    if api_format == "openai_chat":
         upstream_url = build_upstream_url(provider.get("baseUrl", ""), api_format)
         upstream_body = _anthropic_to_openai_body(body, stream=False)
     else:
@@ -456,7 +424,7 @@ async def forward_request(
                 }
             }
 
-        if api_format == "openai":
+        if api_format == "openai_chat":
             # OpenAI → Anthropic 格式转换
             return _openai_to_anthropic(upstream_data, body.get("model", ""))
         return _normalize_anthropic_response(upstream_data, body.get("model", ""))
@@ -478,9 +446,9 @@ async def forward_request_stream(
     request_id: str,
 ):
     """转发流式请求到上游 API（SSE）"""
-    api_format = str(provider.get("apiFormat", "anthropic")).lower()
+    api_format = normalize_api_format(provider.get("apiFormat", "anthropic"))
 
-    if api_format == "openai":
+    if api_format == "openai_chat":
         upstream_url = build_upstream_url(provider.get("baseUrl", ""), api_format)
         upstream_body = _anthropic_to_openai_body(body, stream=True)
     else:
@@ -522,7 +490,7 @@ async def forward_request_stream(
                     yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
                     return
 
-                if api_format == "openai":
+                if api_format == "openai_chat":
                     prefix = "data: "
                     async for line in resp.aiter_lines():
                         if not line.strip():
@@ -568,75 +536,22 @@ async def forward_request_stream(
 
 def _openai_to_anthropic(openai_resp: dict, model: str) -> dict:
     """将 OpenAI 响应格式转换为 Anthropic 格式"""
-    choice = openai_resp.get("choices", [{}])[0]
-    message = choice.get("message", {})
-    content = message.get("content", "")
-
-    # 提取 usage
-    usage = openai_resp.get("usage", {})
-
-    return {
-        "id": openai_resp.get("id", f"msg_{uuid.uuid4().hex[:12]}"),
-        "type": "message",
-        "role": "assistant",
-        "model": model,
-        "content": [{"type": "text", "text": content}],
-        "usage": {
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
-        },
-    }
+    return openai_chat_to_anthropic(openai_resp, model)
 
 
 def _openai_chunk_to_anthropic(chunk: dict, model: str) -> dict:
     """将 OpenAI 流式块转换为 Anthropic SSE 格式"""
-    choices = chunk.get("choices", [])
-    if not choices:
-        return {"type": "message_stop"}
-
-    delta = choices[0].get("delta", {})
-    finish_reason = choices[0].get("finish_reason")
-
-    content = delta.get("content", "")
-    if not content:
-        if finish_reason:
-            return {"type": "message_stop"}
-        # 可能有 role 块但没有内容
-        if delta.get("role"):
-            return {
-                "type": "message_start",
-                "message": {
-                    "id": f"msg_{uuid.uuid4().hex[:12]}",
-                    "type": "message",
-                    "role": "assistant",
-                    "model": model,
-                    "content": [],
-                    "usage": {
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                    },
-                },
-            }
-        return {"type": "ping"}
-
-    return {
-        "type": "content_block_delta",
-        "index": 0,
-        "delta": {
-            "type": "text_delta",
-            "text": content,
-        },
-    }
+    return openai_chat_chunk_to_anthropic(chunk, model)
 
 
 # ========== FastAPI 应用 ==========
 
-from backend.config import get_active_provider, get_gateway_api_key
+from backend.config import get_active_provider, get_gateway_api_key, get_providers, get_settings
 
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.9")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.10")
 
     def upstream_error_status(result: dict) -> int:
         """把上游错误转换成 HTTP 错误状态，避免桌面端按成功响应解析。"""
@@ -683,8 +598,14 @@ def create_proxy_app() -> FastAPI:
             )
         if gateway_auth_failed(request):
             return gateway_auth_error()
+        settings = get_settings()
+        expose_all = bool(settings.get("exposeAllProviderModels"))
         provider = get_active_provider()
-        return gateway_models_response(provider)
+        return gateway_models_response(
+            provider,
+            providers=get_providers() if expose_all else None,
+            expose_all=expose_all,
+        )
 
     @app.api_route("/v1/messages", methods=["POST", "OPTIONS"])
     @app.api_route("/claude/v1/messages", methods=["POST", "OPTIONS"])
@@ -705,8 +626,14 @@ def create_proxy_app() -> FastAPI:
         if gateway_auth_failed(request):
             return gateway_auth_error()
 
-        # 获取当前激活的提供商
+        settings = get_settings()
+        expose_all = bool(settings.get("exposeAllProviderModels"))
+        providers = get_providers() if expose_all else []
+        # 获取当前激活的提供商；全量模型模式下允许模型别名路由到其它 provider。
         provider = get_active_provider()
+        alias_provider, alias_model, alias_hit = resolve_model_alias(providers, body.get("model", "")) if expose_all else (None, "", False)
+        if alias_hit and alias_provider:
+            provider = alias_provider
         if not provider or not provider.get("apiKey"):
             log_buffer.add("ERROR", "没有配置有效的提供商")
             return JSONResponse(
@@ -716,7 +643,7 @@ def create_proxy_app() -> FastAPI:
 
         # 模型名翻译
         original_model = body.get("model", "")
-        mapped_model = map_model(original_model, provider)
+        mapped_model = alias_model if alias_hit else map_model(original_model, provider)
         body["model"] = mapped_model
 
         log_buffer.add("INFO", f"请求: POST /v1/messages")

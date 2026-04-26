@@ -14,7 +14,7 @@ BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
 DEFAULT_UPDATE_URL = "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
 
 DEFAULT_CONFIG = {
-    "version": "1.0.9",
+    "version": "1.0.10",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],
@@ -24,6 +24,7 @@ DEFAULT_CONFIG = {
         "proxyPort": 18080,
         "adminPort": 18081,
         "autoStart": False,
+        "exposeAllProviderModels": False,
         "updateUrl": DEFAULT_UPDATE_URL,
     },
 }

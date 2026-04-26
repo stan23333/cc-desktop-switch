@@ -7,6 +7,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
+from backend.api_adapters import normalize_api_format
 from backend.proxy import build_upstream_url, get_upstream_headers
 
 
@@ -47,11 +48,11 @@ def model_endpoint_candidates(provider: dict) -> list[str]:
     if not base_url:
         return []
 
-    api_format = str(provider.get("apiFormat", "anthropic")).lower()
+    api_format = normalize_api_format(provider.get("apiFormat", "anthropic"))
     upstream = build_upstream_url(base_url, api_format)
     candidates: list[str] = []
 
-    if api_format == "openai":
+    if api_format == "openai_chat":
         candidates.append(_replace_path_suffix(upstream, ("/chat/completions", "/completions"), "/models"))
         candidates.append(f"{base_url}/models")
     else:

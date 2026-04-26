@@ -47,7 +47,7 @@
       id: provider.id,
       name: provider.name,
       baseUrl: provider.baseUrl,
-      apiFormat: provider.apiFormat || 'anthropic',
+      apiFormat: ['openai', 'openai_chat'].includes(provider.apiFormat) ? 'openai_chat' : (provider.apiFormat || 'anthropic'),
       authScheme: provider.authScheme || 'bearer',
       hasApiKey: !!provider.hasApiKey,
       extraHeaders: provider.extraHeaders || {},
@@ -70,7 +70,7 @@
       name: payload.name,
       baseUrl: payload.baseUrl,
       authScheme: payload.authScheme || 'bearer',
-      apiFormat: payload.apiFormat === 'OpenAI' ? 'openai' : 'anthropic',
+      apiFormat: ['OpenAI', 'openai', 'openai_chat'].includes(payload.apiFormat) ? 'openai_chat' : 'anthropic',
       extraHeaders: payload.extraHeaders || {},
       modelCapabilities: payload.modelCapabilities || {},
       requestOptions: payload.requestOptions || {},
@@ -109,6 +109,7 @@
         activeProvider: active ? { name: active.name, id: active.id } : { name: '-', id: null },
         activeProviderId: data.activeProviderId,
         desktopHealth: data.desktopHealth || { needsApply: false, issues: [] },
+        exposeAllProviderModels: !!data.exposeAllProviderModels,
       };
     },
 
@@ -127,7 +128,7 @@
         id: p.id,
         name: p.name,
         baseUrl: p.baseUrl,
-        apiFormat: p.apiFormat === 'openai' ? 'OpenAI' : 'Anthropic',
+        apiFormat: ['openai', 'openai_chat'].includes(p.apiFormat) ? 'OpenAI' : 'Anthropic',
         authScheme: p.authScheme || 'bearer',
         models: p.models || {},
         modelOptions: p.modelOptions || {},
@@ -167,6 +168,10 @@
 
     async queryProviderUsage(id) {
       return api('POST', `/api/providers/${encodeURIComponent(id)}/usage`);
+    },
+
+    async getProviderCompatibility() {
+      return api('GET', '/api/providers/compatibility');
     },
 
     async testProviderPayload(payload) {
@@ -286,6 +291,18 @@
 
     async importConfig(configData) {
       return api('POST', '/api/config/import', configData);
+    },
+
+    async getCcSwitchStatus() {
+      return api('GET', '/api/ccswitch/status');
+    },
+
+    async getCcSwitchProviders() {
+      return api('GET', '/api/ccswitch/providers');
+    },
+
+    async importCcSwitchProviders(ids, setDefault = false) {
+      return api('POST', '/api/ccswitch/import', { ids, setDefault });
     },
 
     async getActivities() {

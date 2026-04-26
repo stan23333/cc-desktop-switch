@@ -17,6 +17,7 @@
   let restartReminderModal = null;
   let toast = null;
   let updateCheckCache = null;
+  let ccSwitchCandidates = [];
 
   function $(selector, root = document) {
     return root.querySelector(selector);
@@ -65,6 +66,12 @@
 
   function t(key) {
     return CCI18n.t(key);
+  }
+
+  function formatI18n(key, values = {}) {
+    return t(key).replace(/\{(\w+)\}/g, (_, name) => (
+      Object.prototype.hasOwnProperty.call(values, name) ? values[name] : `{${name}}`
+    ));
   }
 
   function iconMarkup(item) {
@@ -117,6 +124,16 @@
     });
   }
 
+  function setFormApiFormat(format) {
+    formApiFormat = ["OpenAI", "openai", "openai_chat"].includes(format) ? "OpenAI" : "Anthropic";
+    const activeFormat = formApiFormat === "OpenAI" ? "openai_chat" : "anthropic";
+    $all("[data-api-format]").forEach((button) => {
+      const active = button.dataset.apiFormat === activeFormat;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+
   function firstHealthMessage(health) {
     return health?.issues?.[0]?.message || "";
   }
@@ -159,6 +176,23 @@
       updateCheckCache = null;
       renderUpdateBadge(null);
     }
+  }
+
+  function focusCcSwitchImportSection() {
+    const section = $("#ccSwitchImportSection");
+    if (!section) return;
+    section.scrollIntoView({ behavior: "smooth", block: "center" });
+    section.classList.add("focus-flash");
+    window.setTimeout(() => section.classList.remove("focus-flash"), 1400);
+  }
+
+  function openCcSwitchImportSettings() {
+    if (routeFromHash() !== "settings") {
+      window.location.hash = "settings";
+      window.setTimeout(focusCcSwitchImportSection, 260);
+      return;
+    }
+    focusCcSwitchImportSection();
   }
 
   function emptyMappings() {
@@ -621,7 +655,7 @@
     $("#providerBaseUrl").value = "";
     setApiKeyInputState(false);
     $("#providerAuth").value = "bearer";
-    formApiFormat = "Anthropic";
+    setFormApiFormat("anthropic");
     setProviderMappings(emptyMappings());
   }
 
@@ -631,7 +665,7 @@
     $("#providerAuth").value = preset.authScheme;
     setApiKeyInputState(false);
     selectedPreset = preset;
-    formApiFormat = preset.apiFormat === "OpenAI" ? "OpenAI" : "Anthropic";
+    setFormApiFormat(preset.apiFormat === "OpenAI" ? "openai_chat" : "anthropic");
     formModelCapabilities = normalizeCapabilities(preset.modelCapabilities || {});
     formRequestOptions = normalizeRequestOptions(preset.requestOptions || {});
     setProviderMappings(preset.models || emptyMappings());
@@ -670,7 +704,7 @@
       }
     }
     $("#providerAuth").value = provider.authScheme;
-    formApiFormat = provider.apiFormat === "openai" ? "OpenAI" : "Anthropic";
+    setFormApiFormat(["openai", "openai_chat"].includes(provider.apiFormat) ? "openai_chat" : "anthropic");
     setProviderMappings(provider.mappings || emptyMappings());
     renderPresetOptions(selectedPreset, provider.mappings || emptyMappings());
     updatePresetSelection();
@@ -691,7 +725,31 @@
   }
 
   async function renderProviders() {
+    await renderModelMenuModePanel();
     await renderProviderCards("#providerRows");
+  }
+
+  function renderModelMenuModeState(settings = {}) {
+    const enabled = !!settings.exposeAllProviderModels;
+    const button = $("#modelMenuModeToggle");
+    const hint = $("#modelMenuModeHint");
+    if (button) {
+      button.classList.toggle("btn-primary", enabled);
+      button.classList.toggle("btn-outline-primary", !enabled);
+      const span = $("span", button);
+      if (span) span.textContent = enabled ? t("providers.showSingleModel") : t("providers.showAllModels");
+      button.setAttribute("aria-pressed", enabled ? "true" : "false");
+    }
+    if (hint) {
+      hint.textContent = enabled ? t("providers.modelMenuAllHint") : t("providers.modelMenuSingleHint");
+    }
+    const settingToggle = $("#exposeAllProviderModels");
+    if (settingToggle) settingToggle.checked = enabled;
+  }
+
+  async function renderModelMenuModePanel() {
+    const settings = await CCApi.getSettings();
+    renderModelMenuModeState(settings);
   }
 
   async function renderModelSelectors() {
@@ -774,8 +832,11 @@
     $("#settingsProxyPort").value = settings.proxyPort;
     $("#settingsAdminPort").value = settings.adminPort;
     $("#autoStart").checked = settings.autoStart;
+    $("#exposeAllProviderModels").checked = !!settings.exposeAllProviderModels;
     $("#settingsUpdateUrl").value = settings.updateUrl || "";
+    renderModelMenuModeState(settings);
     await refreshBackupList();
+    await refreshCcSwitchImportStatus();
   }
 
   async function renderRoute(route) {
@@ -810,10 +871,12 @@
       proxyPort: Number($("#settingsProxyPort").value),
       adminPort: Number($("#settingsAdminPort").value),
       autoStart: $("#autoStart").checked,
+      exposeAllProviderModels: $("#exposeAllProviderModels")?.checked || false,
       updateUrl: $("#settingsUpdateUrl").value.trim(),
     };
     await CCApi.saveSettings(settings);
     $("#proxyPort").value = settings.proxyPort;
+    renderModelMenuModeState(settings);
   }
 
   function formatUsageItems(result) {
@@ -858,7 +921,7 @@
 
   async function importConfigFile(file) {
     if (!file) return;
-    if (!window.confirm(t("confirm.configImport"))) return;
+    if (!window.confirm(t("confirm.ccswitchImport"))) return;
     try {
       const text = await file.text();
       const configData = JSON.parse(text);
@@ -871,6 +934,107 @@
     } finally {
       const input = $("#configImportFile");
       if (input) input.value = "";
+    }
+  }
+
+  function ccSwitchStatusMessage(providers = ccSwitchCandidates) {
+    const supported = providers.filter((item) => item.supported).length;
+    const unsupported = providers.length - supported;
+    if (!providers.length) return t("settings.ccswitchNotFound");
+    return formatI18n("settings.ccswitchFound", { supported, unsupported });
+  }
+
+  function renderCcSwitchImportList(providers = ccSwitchCandidates, message = "") {
+    const target = $("#ccSwitchImportList");
+    if (!target) return;
+    if (!providers.length) {
+      target.innerHTML = `<p class="ccswitch-import-empty">${escapeHtml(message || t("settings.ccswitchNotFound"))}</p>`;
+      return;
+    }
+    target.innerHTML = `
+      <p class="ccswitch-import-summary">${escapeHtml(message || ccSwitchStatusMessage(providers))}</p>
+      ${providers.map((provider) => {
+        const statusLabel = provider.supported ? t("settings.ccswitchSupported") : t("settings.ccswitchUnsupported");
+        const statusIcon = provider.supported ? "bi-check2-circle" : "bi-slash-circle";
+        const model = provider.models?.default || provider.models?.sonnet || "";
+        return `
+          <article class="ccswitch-import-item ${provider.supported ? "supported" : "unsupported"}">
+            <div>
+              <strong>${escapeHtml(provider.name)}</strong>
+              <span class="truncate">${escapeHtml(provider.baseUrl || provider.reason || provider.apiFormat)}</span>
+              ${model ? `<small>${escapeHtml(model)}</small>` : ""}
+            </div>
+            <span class="ccswitch-import-secret">${escapeHtml(provider.hasApiKey ? provider.apiKeyPreview : "")}</span>
+            <span class="ccswitch-import-status"><i class="bi ${statusIcon}"></i>${escapeHtml(statusLabel)}</span>
+            ${provider.reason ? `<p>${escapeHtml(provider.reason)}</p>` : ""}
+          </article>
+        `;
+      }).join("")}
+    `;
+  }
+
+  function renderProviderCompatibilityList(result) {
+    const target = $("#providerCompatibilityList");
+    if (!target) return;
+    const providers = result?.providers || [];
+    if (!providers.length) {
+      target.innerHTML = `<p class="compatibility-empty">${escapeHtml(t("settings.compatibilityEmpty"))}</p>`;
+      return;
+    }
+    target.innerHTML = providers.map((provider) => `
+      <article class="compatibility-item ${escapeHtml(provider.level)}">
+        <div>
+          <strong>${escapeHtml(provider.name)}</strong>
+          <span>${escapeHtml(provider.message)}</span>
+        </div>
+        <em>${escapeHtml(provider.apiFormat)}</em>
+      </article>
+    `).join("");
+  }
+
+  async function refreshCcSwitchImportStatus() {
+    const target = $("#ccSwitchImportList");
+    if (!target) return;
+    try {
+      const status = await CCApi.getCcSwitchStatus();
+      if (!status.found) {
+        ccSwitchCandidates = [];
+        renderCcSwitchImportList([], t("settings.ccswitchNotFound"));
+        return;
+      }
+      const result = await CCApi.getCcSwitchProviders();
+      ccSwitchCandidates = result.providers || [];
+      renderCcSwitchImportList(ccSwitchCandidates, formatI18n("settings.ccswitchFound", {
+        supported: result.supportedCount || 0,
+        unsupported: result.unsupportedCount || 0,
+      }));
+    } catch (error) {
+      console.error(error);
+      ccSwitchCandidates = [];
+      renderCcSwitchImportList([], error.message || t("settings.ccswitchNotFound"));
+    }
+  }
+
+  async function importCcSwitchProviders(actionEl) {
+    if (!ccSwitchCandidates.length) {
+      await refreshCcSwitchImportStatus();
+    }
+    const ids = ccSwitchCandidates.filter((item) => item.supported).map((item) => item.id);
+    if (!ids.length) {
+      showToast(t("settings.ccswitchNoSupported"));
+      return;
+    }
+    if (!window.confirm(t("confirm.configImport"))) return;
+    actionEl.disabled = true;
+    try {
+      const result = await CCApi.importCcSwitchProviders(ids, false);
+      await refreshBackupList();
+      await refreshCcSwitchImportStatus();
+      if (routeFromHash() === "dashboard") await renderDashboard();
+      if (routeFromHash() === "providers") await renderProviders();
+      showToast(formatI18n("settings.ccswitchImported", { count: result.imported?.length || 0 }));
+    } finally {
+      actionEl.disabled = false;
     }
   }
 
@@ -1105,6 +1269,29 @@
         window.location.hash = "proxy";
       }
 
+      if (action === "open-ccswitch-import") {
+        openCcSwitchImportSettings();
+      }
+
+      if (action === "toggle-model-menu-mode") {
+        const settings = await CCApi.getSettings();
+        const next = !settings.exposeAllProviderModels;
+        const saved = await CCApi.saveSettings({ exposeAllProviderModels: next });
+        renderModelMenuModeState(saved);
+        showToast(next ? t("toast.allModelsEnabled") : t("toast.singleModelEnabled"));
+      }
+
+      if (action === "check-provider-compatibility") {
+        actionEl.disabled = true;
+        try {
+          const result = await CCApi.getProviderCompatibility();
+          renderProviderCompatibilityList(result);
+          showToast(t("toast.compatibilityChecked"));
+        } finally {
+          actionEl.disabled = false;
+        }
+      }
+
       if (action === "check-update") {
         const result = await CCApi.checkUpdate($("#settingsUpdateUrl").value.trim());
         updateCheckCache = result;
@@ -1170,6 +1357,20 @@
         $("#configImportFile").click();
       }
 
+      if (action === "detect-ccswitch") {
+        actionEl.disabled = true;
+        try {
+          await refreshCcSwitchImportStatus();
+          showToast(ccSwitchStatusMessage());
+        } finally {
+          actionEl.disabled = false;
+        }
+      }
+
+      if (action === "import-ccswitch") {
+        await importCcSwitchProviders(actionEl);
+      }
+
       if (action === "apply-provider-desktop") {
         await applyProviderToDesktop(actionEl);
       }
@@ -1206,6 +1407,13 @@
       }
       const themeButton = event.target.closest("[data-theme-action]");
       if (themeButton) applyTheme(themeButton.dataset.themeAction);
+      const formatButton = event.target.closest("[data-api-format]");
+      if (formatButton) {
+        event.preventDefault();
+        setFormApiFormat(formatButton.dataset.apiFormat);
+        showToast(formatButton.dataset.apiFormat === "openai_chat" ? t("toast.openaiFormatExperimental") : t("toast.anthropicFormatSelected"));
+        return;
+      }
       const presetButton = event.target.closest("[data-preset]");
       if (presetButton && presetButton.closest("#presetList")) {
         event.preventDefault();
@@ -1244,6 +1452,7 @@
     $("#settingsAdminPort").addEventListener("change", saveSettingsFromForm);
     $("#settingsUpdateUrl").addEventListener("change", saveSettingsFromForm);
     $("#autoStart").addEventListener("change", saveSettingsFromForm);
+    $("#exposeAllProviderModels").addEventListener("change", saveSettingsFromForm);
     $("#configImportFile")?.addEventListener("change", (event) => {
       importConfigFile(event.target.files?.[0]);
     });

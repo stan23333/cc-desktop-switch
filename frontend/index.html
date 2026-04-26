@@ -18,7 +18,7 @@
       <nav class="route-tabs" aria-label="Primary navigation">
         <a href="#dashboard" class="route-tab" data-nav="dashboard" title="Providers"><i class="bi bi-speedometer2"></i><span data-i18n="nav.dashboard">仪表盘</span></a>
         <a href="#providers" class="route-tab" data-nav="providers" title="Providers"><i class="bi bi-plug"></i><span data-i18n="nav.providers">提供商</span></a>
-        <a href="#proxy" class="route-tab" data-nav="proxy" title="Proxy"><i class="bi bi-broadcast-pin"></i><span data-i18n="nav.proxy">代理</span></a>
+        <a href="#proxy" class="route-tab" data-nav="proxy" title="Forwarding"><i class="bi bi-broadcast-pin"></i><span data-i18n="nav.proxy">转发</span></a>
         <a href="#settings" class="route-tab" data-nav="settings" title="Settings"><i class="bi bi-gear"></i><span data-i18n="nav.settings">设置</span></a>
         <a href="#guide" class="route-tab" data-nav="guide" title="Guide"><i class="bi bi-book"></i><span data-i18n="nav.guide">引导</span></a>
       </nav>
@@ -49,7 +49,10 @@
               <h1>Providers <button class="update-badge" id="dashboardUpdateBadge" type="button" data-action="install-update" hidden><i class="bi bi-cloud-arrow-down"></i><span data-i18n="dashboard.updateAvailable">有新版本</span></button></h1>
               <p>选择一个提供商，启动转发后给 Claude 桌面版使用。</p>
             </div>
-            <a href="#providers/add" class="round-add" aria-label="添加提供商"><i class="bi bi-plus-lg"></i></a>
+            <div class="switch-board-actions">
+              <button class="btn btn-outline-primary btn-sm dashboard-import-button" type="button" data-action="open-ccswitch-import"><i class="bi bi-box-arrow-in-down"></i><span data-i18n="dashboard.importCcSwitch">导入 CC Switch 配置</span></button>
+              <a href="#providers/add" class="round-add" aria-label="添加提供商"><i class="bi bi-plus-lg"></i></a>
+            </div>
           </div>
           <div class="provider-card-list" id="dashboardProviderCards"></div>
         </div>
@@ -130,6 +133,20 @@
                   <option value="none">none</option>
                 </select>
               </div>
+              <details class="advanced-provider-options" open>
+                <summary><i class="bi bi-sliders"></i><span data-i18n="providersAdd.compatTitle">高级：第三方兼容接口</span><i class="bi bi-chevron-down compat-chevron"></i></summary>
+                <p data-i18n="providersAdd.compatHint">默认使用 Anthropic 兼容接口。OpenAI Chat 属于实验适配，建议确认工具调用可用后再用于 Claude Code。</p>
+                <div class="format-choice" id="providerFormatChoice" role="group" aria-label="API format">
+                  <button class="format-choice-button active" type="button" data-api-format="anthropic">
+                    <strong data-i18n="providersAdd.formatAnthropic">Anthropic 兼容</strong>
+                    <span data-i18n="providersAdd.formatAnthropicHint">推荐，稳定主流程</span>
+                  </button>
+                  <button class="format-choice-button" type="button" data-api-format="openai_chat">
+                    <strong data-i18n="providersAdd.formatOpenAI">OpenAI Chat 实验</strong>
+                    <span data-i18n="providersAdd.formatOpenAIHint">用于 new-api / CPA / OpenCode Go 等兼容端点</span>
+                  </button>
+                </div>
+              </details>
               <section class="provider-mapping-section">
                 <div class="section-title-row">
                   <div>
@@ -178,6 +195,16 @@
           </div>
           <a href="#providers/add" class="btn btn-primary btn-lg"><i class="bi bi-plus-lg"></i><span data-i18n="providers.add">添加提供商</span></a>
         </div>
+
+        <article class="panel model-menu-mode-panel" hidden aria-hidden="true">
+          <div>
+            <h2 data-i18n="providers.modelMenuTitle">Claude 模型菜单</h2>
+            <p id="modelMenuModeHint" data-i18n="providers.modelMenuSingleHint">当前只把默认提供商的模型显示到 Claude 桌面版。</p>
+          </div>
+          <button class="btn btn-outline-primary btn-sm" id="modelMenuModeToggle" type="button" data-action="toggle-model-menu-mode">
+            <i class="bi bi-list-stars"></i><span data-i18n="providers.showAllModels">显示全部模型</span>
+          </button>
+        </article>
 
         <article class="panel table-panel">
           <div class="provider-table-header">
@@ -243,8 +270,8 @@
 
       <section class="page" id="page-proxy" data-page="proxy">
         <div class="page-title">
-          <h1 data-i18n="proxy.title">代理控制台</h1>
-          <p data-i18n="proxy.subtitle">监控并控制本机转发服务</p>
+          <h1 data-i18n="proxy.title">转发状态</h1>
+          <p data-i18n="proxy.subtitle">查看本机转发服务状态和请求日志</p>
         </div>
 
         <article class="panel proxy-control">
@@ -256,7 +283,7 @@
             </div>
           </div>
           <div class="port-control">
-            <label class="form-label" for="proxyPort" data-i18n="settings.proxyPort">代理端口</label>
+            <label class="form-label" for="proxyPort" data-i18n="settings.proxyPort">转发端口</label>
             <input class="form-control form-control-lg" type="number" id="proxyPort" value="18080">
           </div>
           <button class="btn btn-outline-secondary btn-lg" type="button" data-action="proxy-start"><i class="bi bi-play"></i><span data-i18n="proxy.start">启动转发</span></button>
@@ -297,7 +324,7 @@
             </div>
           </div>
           <div class="settings-row">
-            <strong data-i18n="settings.proxyPort">代理端口</strong>
+            <strong data-i18n="settings.proxyPort">转发端口</strong>
             <input class="form-control form-control-lg" type="number" id="settingsProxyPort" value="18080">
           </div>
           <div class="settings-row">
@@ -308,11 +335,25 @@
             <strong data-i18n="settings.autoStart">开机自启</strong>
             <label class="switch-label only-switch"><input type="checkbox" id="autoStart" checked><span class="switch-ui"></span></label>
           </div>
+          <div class="settings-row" hidden aria-hidden="true">
+            <strong data-i18n="settings.exposeAllModels">Claude 模型菜单</strong>
+            <label class="switch-label only-switch"><input type="checkbox" id="exposeAllProviderModels"><span class="switch-ui"></span></label>
+          </div>
           <div class="settings-row">
             <strong data-i18n="settings.updateUrl">更新地址</strong>
             <input class="form-control form-control-lg" type="url" id="settingsUpdateUrl" placeholder="https://github.com/owner/repo/releases/latest/download/latest.json">
           </div>
           <div class="settings-row settings-row-stack">
+            <strong data-i18n="settings.thirdPartyCompat">第三方兼容</strong>
+            <div>
+              <div class="settings-actions">
+                <button class="btn btn-outline-primary btn-sm" type="button" data-action="check-provider-compatibility"><i class="bi bi-patch-check"></i><span data-i18n="settings.checkCompatibility">检查兼容性</span></button>
+              </div>
+              <div class="compatibility-list" id="providerCompatibilityList"></div>
+              <p class="settings-note" data-i18n="settings.thirdPartyCompatHint">Anthropic 兼容接口是稳定主线；OpenAI Chat、new-api、CPA、OpenCode Go 属于实验适配，工具调用需要单独验证。</p>
+            </div>
+          </div>
+          <div class="settings-row settings-row-stack" id="ccSwitchImportSection">
             <strong data-i18n="settings.configBackup">配置备份</strong>
             <div>
               <div class="settings-actions">
@@ -325,11 +366,22 @@
               <p class="settings-note" data-i18n="settings.configBackupHint">导出的配置会包含 API Key，请只保存在可信设备上。</p>
             </div>
           </div>
+          <div class="settings-row settings-row-stack">
+            <strong data-i18n="settings.ccswitchImport">CC-Switch 导入</strong>
+            <div>
+              <div class="settings-actions">
+                <button class="btn btn-outline-primary btn-sm" type="button" data-action="detect-ccswitch"><i class="bi bi-search"></i><span data-i18n="settings.ccswitchDetect">检测配置</span></button>
+                <button class="btn btn-primary btn-sm" type="button" data-action="import-ccswitch"><i class="bi bi-box-arrow-in-down"></i><span data-i18n="settings.ccswitchImportButton">导入兼容项</span></button>
+              </div>
+              <div class="ccswitch-import-list" id="ccSwitchImportList"></div>
+              <p class="settings-note" data-i18n="settings.ccswitchImportHint">只导入 Anthropic 兼容配置；OpenAI 格式会显示为暂不导入，避免转换风险。</p>
+            </div>
+          </div>
         </article>
 
         <article class="panel about-panel">
           <h2 data-i18n="settings.about">关于</h2>
-          <div><span data-i18n="settings.version">版本</span><strong>1.0.9</strong></div>
+          <div><span data-i18n="settings.version">版本</span><strong>1.0.10</strong></div>
           <div><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
           <div><span data-i18n="settings.checkUpdate">检查更新</span><span class="settings-actions inline-actions"><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button><button class="btn btn-primary btn-sm" id="settingsInstallUpdate" type="button" data-action="install-update" hidden><i class="bi bi-download"></i><span data-i18n="settings.installUpdate">下载并安装</span></button></span></div>
           <p class="update-status" id="updateStatus"></p>

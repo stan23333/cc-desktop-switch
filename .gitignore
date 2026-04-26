@@ -3,6 +3,7 @@
 .onefile-runtime-home/
 .runtime-home/
 .tmp/
+.tmp-*/
 .playwright-mcp/
 .kiro-review/
 .DS_Store

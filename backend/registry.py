@@ -8,6 +8,8 @@ import sys
 import tempfile
 from typing import Optional
 
+from backend.model_alias import all_provider_model_entries, provider_model_entries
+
 REGISTRY_PATH = r"SOFTWARE\Policies\Claude"
 CCDS_MARKER = "ccds_managed"
 
@@ -22,6 +24,22 @@ DESKTOP_CONFIG = {
 }
 
 # ── 辅助函数 ──
+
+def _desktop_model_items(items: list) -> list:
+    """只保留 Claude Desktop policy 支持的模型字段。"""
+    cleaned = []
+    for item in items:
+        if not isinstance(item, dict):
+            cleaned.append(item)
+            continue
+        allowed = {
+            "name": item.get("name"),
+            "displayName": item.get("displayName"),
+        }
+        if item.get("supports1m") is True:
+            allowed["supports1m"] = True
+        cleaned.append({k: v for k, v in allowed.items() if v is not None})
+    return cleaned
 
 def _safe_config_value(name: str, value) -> str:
     """返回可展示的配置值，避免把密钥暴露给前端。"""
@@ -54,38 +72,25 @@ def provider_inference_models(provider: Optional[dict]) -> list:
     fallback = ["sonnet", "haiku", "opus"]
     if not provider:
         return fallback
-
-    models = provider.get("models") or {}
-    if not isinstance(models, dict):
-        return fallback
-    model_capabilities = provider.get("modelCapabilities") or {}
-    if not isinstance(model_capabilities, dict):
-        model_capabilities = {}
-
-    ordered = []
-    for key in ("default", "sonnet", "opus", "haiku"):
-        model_id = str(models.get(key) or "").strip()
-        if model_id and model_id not in ordered:
-            ordered.append(model_id)
-
-    if not ordered:
-        return fallback
-
-    result = []
-    for model_id in ordered:
-        item = {"name": model_id, "displayName": model_id}
-        capabilities = model_capabilities.get(model_id)
-        supports_1m = isinstance(capabilities, dict) and capabilities.get("supports1m") is True
-        if "[1m]" in model_id.lower() or supports_1m:
-            item["supports1m"] = True
-        result.append(item)
-    return result
+    result = _desktop_model_items(provider_model_entries(provider, use_alias=False))
+    return result or fallback
 
 
-def serialize_inference_models(provider: Optional[dict]) -> str:
+def all_provider_inference_models(providers: list[dict]) -> list:
+    """生成所有 provider 的 Claude Desktop 模型列表。"""
+    result = _desktop_model_items(all_provider_model_entries(providers))
+    return result or ["sonnet", "haiku", "opus"]
+
+
+def serialize_inference_models(
+    provider: Optional[dict],
+    providers: Optional[list[dict]] = None,
+    expose_all: bool = False,
+) -> str:
     """序列化 inferenceModels，供注册表 / plist 写入。"""
+    models = all_provider_inference_models(providers or []) if expose_all else provider_inference_models(provider)
     return json.dumps(
-        provider_inference_models(provider),
+        models,
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -766,9 +771,11 @@ def apply_config(
     base_url: str = "http://127.0.0.1:18080",
     gateway_api_key: str = "",
     provider: Optional[dict] = None,
+    providers: Optional[list[dict]] = None,
+    expose_all: bool = False,
 ) -> dict:
     """应用 Desktop 3P 配置"""
-    inference_models = serialize_inference_models(provider)
+    inference_models = serialize_inference_models(provider, providers=providers, expose_all=expose_all)
     os_name = _os_name()
     if os_name == "win":
         return _win_apply_config(base_url, gateway_api_key, inference_models)
