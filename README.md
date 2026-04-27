@@ -93,8 +93,8 @@ https://github.com/lonr-6/cc-desktop-switch/releases/latest
 
 推荐普通用户下载：
 
-- `CC-Desktop-Switch-v1.0.11-Windows-Setup.exe`：Windows 安装版
-- `CC-Desktop-Switch-v1.0.11-Windows-Portable.zip`：Windows 便携版
+- `CC-Desktop-Switch-v1.0.12-Windows-Setup.exe`：Windows 安装版
+- `CC-Desktop-Switch-v1.0.12-Windows-Portable.zip`：Windows 便携版
 
 macOS 版本由 macOS 维护者单独同步；如果 Release 页面出现 `macOS-arm64.dmg` 或 `macOS-arm64.pkg`，DMG 为拖拽安装版，PKG 会安装到 `/Applications/CC Desktop Switch.app`。
 
