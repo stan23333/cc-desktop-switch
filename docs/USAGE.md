@@ -26,8 +26,6 @@ CC-Desktop-Switch-v1.0.13-Windows-Portable.zip
 
 macOS 版本由 macOS 维护者单独同步。如果 Release 页面出现对应的 DMG 或 PKG，DMG 打开后把应用拖到“应用程序”；PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。
 
-macOS 版本由 macOS 维护者单独同步；具体行为以对应 macOS Release 说明为准。
-
 启动后会打开一个桌面窗口。浏览器地址只是备用入口：
 
 ```text
@@ -94,7 +92,7 @@ DeepSeek 还提供“DeepSeek Max 思维”选项。Claude 界面可能仍显示
 3. 把这个提供商设为默认。
 4. 写入 Claude 桌面版需要的本机连接信息。
 
-在 Windows 上，本工具会写入 Claude Desktop 使用的本机策略配置。DeepSeek、Kimi、智谱、阿里云百炼这类 Anthropic 兼容接口默认直连；应用成功并重启 Claude Desktop 后，关闭本工具也能继续使用。OpenAI / new-api / 反代类实验接口才需要本机转发服务。
+在 Windows 和 macOS 上，本工具会写入 Claude Desktop 使用的本机 3P 配置。DeepSeek、Kimi、智谱、阿里云百炼这类 Anthropic 兼容接口默认直连；应用成功并重启 Claude Desktop 后，关闭本工具也能继续使用。OpenAI / new-api / 反代类实验接口才需要本机转发服务。
 
 原理很直白：
 

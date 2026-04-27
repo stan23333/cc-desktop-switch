@@ -51,6 +51,8 @@ def _desktop_model_items(items: list) -> list:
 def _safe_config_value(name: str, value) -> str:
     """返回可展示的配置值，避免把密钥暴露给前端。"""
     lowered = name.lower()
+    if "headers" in lowered and value in (None, "", "[]", []):
+        return ""
     if any(token in lowered for token in ("key", "token", "secret", "authorization", "headers")):
         return "******" if value else ""
     return str(value)
@@ -358,7 +360,13 @@ def _mac_get_plist_config_status() -> dict:
     return {"configured": configured, "keys": keys, "message": ""}
 
 
-def _mac_apply_plist_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
+def _mac_apply_plist_config(
+    base_url: str,
+    gateway_api_key: str = "",
+    inference_models: str = "",
+    auth_scheme: str = "bearer",
+    gateway_headers: str = "",
+) -> dict:
     try:
         inference_models = inference_models or DESKTOP_CONFIG["inferenceModels"][0]
         expected = {}
@@ -369,6 +377,10 @@ def _mac_apply_plist_config(base_url: str, gateway_api_key: str = "", inference_
                 val = base_url
             if name == "inferenceGatewayApiKey":
                 val = gateway_api_key
+            if name == "inferenceGatewayAuthScheme":
+                val = auth_scheme or DESKTOP_CONFIG["inferenceGatewayAuthScheme"][0]
+            if name == "inferenceGatewayHeaders":
+                val = gateway_headers or DESKTOP_CONFIG["inferenceGatewayHeaders"][0]
             if name == "inferenceModels":
                 val = inference_models
             expected[name] = val
@@ -478,12 +490,31 @@ def _mac_json_model_names(inference_models: str) -> list[str]:
     return result or ["sonnet", "haiku", "opus"]
 
 
-def _mac_json_enterprise_config(base_url: str, gateway_api_key: str, inference_models: str) -> dict:
+def _mac_json_gateway_headers(gateway_headers: str) -> list[str]:
+    try:
+        parsed = json.loads(gateway_headers or DESKTOP_CONFIG["inferenceGatewayHeaders"][0])
+    except (TypeError, ValueError):
+        parsed = []
+    if isinstance(parsed, list):
+        return [str(item) for item in parsed if str(item or "").strip()]
+    if isinstance(parsed, str) and parsed.strip():
+        return [parsed.strip()]
+    return []
+
+
+def _mac_json_enterprise_config(
+    base_url: str,
+    gateway_api_key: str,
+    inference_models: str,
+    auth_scheme: str = "bearer",
+    gateway_headers: str = "",
+) -> dict:
     return {
         "inferenceProvider": "gateway",
         "inferenceGatewayBaseUrl": base_url,
         "inferenceGatewayApiKey": gateway_api_key,
-        "inferenceGatewayAuthScheme": "bearer",
+        "inferenceGatewayAuthScheme": auth_scheme or DESKTOP_CONFIG["inferenceGatewayAuthScheme"][0],
+        "inferenceGatewayHeaders": _mac_json_gateway_headers(gateway_headers),
         "inferenceModels": _mac_json_model_names(inference_models),
         "isClaudeCodeForDesktopEnabled": True,
     }
@@ -496,6 +527,8 @@ def _mac_json_status_keys(enterprise_config: dict) -> dict:
             continue
         value = enterprise_config.get(name)
         if name == "inferenceModels" and isinstance(value, list):
+            value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        if name == "inferenceGatewayHeaders" and isinstance(value, list):
             value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         if name == "isClaudeCodeForDesktopEnabled" and isinstance(value, bool):
             value = int(value)
@@ -581,7 +614,13 @@ def _mac_get_library_config_status() -> dict:
     return {"configured": False, "keys": {}, "message": "", "exists": True}
 
 
-def _mac_apply_library_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
+def _mac_apply_library_config(
+    base_url: str,
+    gateway_api_key: str = "",
+    inference_models: str = "",
+    auth_scheme: str = "bearer",
+    gateway_headers: str = "",
+) -> dict:
     ok, paths, message = _mac_config_library_entry_paths(include_missing_active=True)
     if not ok:
         return {"success": False, "message": f"configLibrary 元数据读取失败: {message}"}
@@ -592,6 +631,8 @@ def _mac_apply_library_config(base_url: str, gateway_api_key: str = "", inferenc
         base_url,
         gateway_api_key,
         inference_models or DESKTOP_CONFIG["inferenceModels"][0],
+        auth_scheme,
+        gateway_headers,
     )
     failures = []
     for path in paths:
@@ -618,7 +659,13 @@ def _mac_apply_library_config(base_url: str, gateway_api_key: str = "", inferenc
     return {"success": True, "message": "macOS configLibrary 3P 配置已应用"}
 
 
-def _mac_apply_json_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
+def _mac_apply_json_config(
+    base_url: str,
+    gateway_api_key: str = "",
+    inference_models: str = "",
+    auth_scheme: str = "bearer",
+    gateway_headers: str = "",
+) -> dict:
     ok, data, message = _mac_read_json_config()
     if not ok:
         return {"success": False, "message": f"JSON 配置读取失败: {message}"}
@@ -627,6 +674,8 @@ def _mac_apply_json_config(base_url: str, gateway_api_key: str = "", inference_m
         base_url,
         gateway_api_key,
         inference_models or DESKTOP_CONFIG["inferenceModels"][0],
+        auth_scheme,
+        gateway_headers,
     )
     enterprise_config = data.get("enterpriseConfig")
     if not isinstance(enterprise_config, dict):
@@ -684,10 +733,16 @@ def _mac_get_config_status() -> dict:
     }
 
 
-def _mac_apply_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
-    plist_result = _mac_apply_plist_config(base_url, gateway_api_key, inference_models)
-    json_result = _mac_apply_json_config(base_url, gateway_api_key, inference_models)
-    library_result = _mac_apply_library_config(base_url, gateway_api_key, inference_models)
+def _mac_apply_config(
+    base_url: str,
+    gateway_api_key: str = "",
+    inference_models: str = "",
+    auth_scheme: str = "bearer",
+    gateway_headers: str = "",
+) -> dict:
+    plist_result = _mac_apply_plist_config(base_url, gateway_api_key, inference_models, auth_scheme, gateway_headers)
+    json_result = _mac_apply_json_config(base_url, gateway_api_key, inference_models, auth_scheme, gateway_headers)
+    library_result = _mac_apply_library_config(base_url, gateway_api_key, inference_models, auth_scheme, gateway_headers)
     if plist_result.get("success") and json_result.get("success") and library_result.get("success"):
         return {"success": True, "message": "macOS Desktop 3P 配置已应用"}
 
@@ -821,7 +876,7 @@ def apply_config(
     if os_name == "win":
         return _win_apply_config(base_url, gateway_api_key, inference_models, auth_scheme, gateway_headers)
     elif os_name == "mac":
-        return _mac_apply_config(base_url, gateway_api_key, inference_models)
+        return _mac_apply_config(base_url, gateway_api_key, inference_models, auth_scheme, gateway_headers)
     return _not_supported()
 
 

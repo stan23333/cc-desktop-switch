@@ -48,7 +48,11 @@ The in-app updater uses platform keys such as `macos-arm64` and `macos-x64` from
 
 ## Runtime Behavior
 
-The first macOS runtime keeps the app as a normal Dock application. Closing the window hides it so the local proxy can continue serving Claude Desktop through `127.0.0.1:<proxyPort>`, and clicking the Dock icon restores the main window. Quit with `Cmd+Q`, the Dock Quit command, or the app's Window menu when the proxy should stop.
+The macOS runtime keeps the app as a normal Dock application. Closing the window hides it, and clicking the Dock icon restores the main window.
+
+For Anthropic-compatible providers, the app writes the selected provider URL, API key, auth scheme, extra gateway headers, and model list directly into Claude Desktop's macOS 3P configuration. After applying the configuration and fully restarting Claude Desktop, Claude Desktop can keep using that provider even if CC Desktop Switch is quit.
+
+The local proxy is still used for experimental OpenAI, new-api, and reverse-proxy style providers that need request conversion. In that mode, keep CC Desktop Switch running; closing the window only hides the app so the proxy can continue serving Claude Desktop through `127.0.0.1:<proxyPort>`. Quit with `Cmd+Q`, the Dock Quit command, or the app's Window menu when the proxy should stop.
 
 ## Optional Signing
 
@@ -94,8 +98,9 @@ Then verify:
 
 - The desktop window opens.
 - `http://127.0.0.1:18081/api/status` responds.
-- Applying Claude Desktop configuration writes the macOS plist through `defaults`.
-- The proxy starts on port `18080`.
+- Applying an Anthropic-compatible provider writes the macOS plist, root Claude-3p JSON config, and active `configLibrary` entry.
+- Anthropic-compatible providers report direct-provider mode and do not require the proxy after Claude Desktop restarts.
+- Experimental OpenAI/new-api providers start the proxy on port `18080` and keep working when the window is hidden.
 
 ## Notes
 

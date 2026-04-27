@@ -7,11 +7,11 @@
 
 CC Desktop Switch 是一个面向 **Claude Desktop 官方桌面客户端** 的轻量配置工具。它用桌面界面管理 DeepSeek、Kimi、智谱 GLM、阿里云百炼等 API 提供商，并一键写入 Claude Desktop 的第三方推理配置。
 
-和 `farion1231/cc-switch` 这类偏 Claude Code / CLI 的工具不同，本项目的定位是：让普通用户在 Windows 上更方便地配置 Claude Desktop 官方客户端。
+和 `farion1231/cc-switch` 这类偏 Claude Code / CLI 的工具不同，本项目的定位是：让普通用户在 Windows 和 macOS 上更方便地配置 Claude Desktop 官方客户端。
 
 Windows 安装版和便携版默认会打开独立桌面窗口；浏览器地址只作为调试和备用入口。点击窗口关闭按钮时，应用会缩小到系统托盘继续运行；需要完全退出时，请右键托盘图标选择“退出”。
 
-Windows 版默认使用直连配置：完成“一键应用”并重启 Claude Desktop 后，即使关闭本工具，Claude Desktop 仍可以继续使用当前供应商。OpenAI / new-api / 反代类接口属于实验兼容路径，必要时才使用本机转发服务。
+Windows 和 macOS 稳定路径默认使用直连配置：完成“一键应用”并重启 Claude Desktop 后，即使关闭本工具，Claude Desktop 仍可以继续使用当前供应商。OpenAI / new-api / 反代类接口属于实验兼容路径，必要时才使用本机转发服务。
 
 macOS 版本由 macOS 维护者单独同步；Linux 可以运行管理后台和代理，但 Claude Desktop 没有对应 GUI 版本。
 
@@ -140,7 +140,7 @@ http://127.0.0.1:18081
 
 ## English Quick Start
 
-CC Desktop Switch is a lightweight desktop app for the official Claude Desktop client. It helps Windows users configure third-party Anthropic-compatible API providers such as DeepSeek, Kimi, Zhipu GLM, and Alibaba Cloud Bailian.
+CC Desktop Switch is a lightweight desktop app for the official Claude Desktop client. It helps Windows and macOS users configure third-party Anthropic-compatible API providers such as DeepSeek, Kimi, Zhipu GLM, and Alibaba Cloud Bailian.
 
 1. Download the latest installer or portable package from [GitHub Releases](https://github.com/lonr-6/cc-desktop-switch/releases/latest).
 2. Open CC Desktop Switch.
@@ -151,7 +151,7 @@ CC Desktop Switch is a lightweight desktop app for the official Claude Desktop c
 Supported stable path:
 
 - Anthropic-compatible APIs are the recommended path.
-- The default Windows flow writes the selected provider directly into Claude Desktop's local configuration. After applying and fully restarting Claude Desktop, the selected provider can keep working even if CC Desktop Switch is closed.
+- The default Windows and macOS flow writes the selected provider directly into Claude Desktop's local configuration. After applying and fully restarting Claude Desktop, the selected provider can keep working even if CC Desktop Switch is closed.
 - DeepSeek 1M context, DeepSeek Max effort, and Qwen 1M context can be enabled from the provider edit page.
 
 Experimental compatibility:
@@ -246,7 +246,7 @@ netstat -ano | findstr :18080
 ## 安全说明
 
 - API Key 只保存在本机配置文件中，不要上传 `~/.cc-desktop-switch/config.json`。
-- “一键应用到 Claude 桌面版”会写入 Claude Desktop 在当前系统上使用的本机配置。Windows 稳定路径会写入当前供应商的 API 地址、API Key 和模型列表，这样关闭本工具后 Claude Desktop 也能继续使用。
+- “一键应用到 Claude 桌面版”会写入 Claude Desktop 在当前系统上使用的本机配置。Windows 和 macOS 稳定路径会写入当前供应商的 API 地址、API Key、认证方案、额外请求头和模型列表，这样关闭本工具后 Claude Desktop 也能继续使用。
 - OpenAI / new-api / 反代类实验接口可能需要本机转发服务；这类模式下请保持本工具运行。
 - 不要把 `~/.cc-desktop-switch/config.json`、截图里的完整 API Key、或 Claude Desktop 的本机配置文件上传到公开仓库。
 

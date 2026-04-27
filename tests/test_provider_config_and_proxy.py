@@ -10,7 +10,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.main import _desktop_health, _test_provider_connection, create_admin_app
+from backend.main import _desktop_health, _test_provider_connection, create_admin_app, desktop_config_target_for_provider
 from main import DesktopTrayController
 from backend import config as cfg
 from backend import ccswitch_import
@@ -222,6 +222,25 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertTrue(by_name["qwen3.6-flash"]["supports1m"])
         self.assertNotIn("supports1m", by_name["qwen3.6-max-preview"])
 
+    def test_desktop_config_target_serializes_extra_headers_for_direct_provider(self):
+        provider = {
+            "name": "Custom Anthropic",
+            "baseUrl": "https://api.example.com/anthropic/",
+            "apiKey": "provider-key",
+            "authScheme": "x-api-key",
+            "apiFormat": "anthropic",
+            "extraHeaders": {"x-api-key": "{apiKey}"},
+        }
+
+        target = desktop_config_target_for_provider(provider, {"proxyPort": 18080})
+
+        self.assertEqual(target["mode"], "direct_provider")
+        self.assertFalse(target["requiresProxy"])
+        self.assertEqual(target["baseUrl"], "https://api.example.com/anthropic")
+        self.assertEqual(target["apiKey"], "provider-key")
+        self.assertEqual(target["authScheme"], "x-api-key")
+        self.assertEqual(json.loads(target["gatewayHeaders"]), ["x-api-key: provider-key"])
+
     def test_all_provider_inference_models_use_provider_aliases_and_keep_1m(self):
         providers = [
             {
@@ -340,6 +359,8 @@ class ProviderConfigTests(unittest.TestCase):
                     "http://127.0.0.1:18080",
                     gateway_api_key="secret-value",
                     inference_models='[{"name":"model-a","displayName":"Model A"},{"name":"model-b","supports1m":true}]',
+                    auth_scheme="x-api-key",
+                    gateway_headers='["x-api-key: secret-value"]',
                 )
 
         self.assertTrue(result["success"])
@@ -351,7 +372,8 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(saved["enterpriseConfig"]["inferenceProvider"], "gateway")
         self.assertEqual(saved["enterpriseConfig"]["inferenceGatewayBaseUrl"], "http://127.0.0.1:18080")
         self.assertEqual(saved["enterpriseConfig"]["inferenceGatewayApiKey"], "secret-value")
-        self.assertEqual(saved["enterpriseConfig"]["inferenceGatewayAuthScheme"], "bearer")
+        self.assertEqual(saved["enterpriseConfig"]["inferenceGatewayAuthScheme"], "x-api-key")
+        self.assertEqual(saved["enterpriseConfig"]["inferenceGatewayHeaders"], ["x-api-key: secret-value"])
         self.assertEqual(saved["enterpriseConfig"]["inferenceModels"], ["model-a", "model-b"])
         self.assertIs(saved["enterpriseConfig"]["isClaudeCodeForDesktopEnabled"], True)
 
@@ -379,6 +401,8 @@ class ProviderConfigTests(unittest.TestCase):
                     "http://127.0.0.1:18080",
                     gateway_api_key="secret-value",
                     inference_models='[{"name":"model-a","displayName":"Model A"},{"name":"model-b","supports1m":true}]',
+                    auth_scheme="x-api-key",
+                    gateway_headers='["x-api-key: secret-value"]',
                 )
 
         self.assertTrue(result["success"])
@@ -388,7 +412,8 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(saved["inferenceProvider"], "gateway")
         self.assertEqual(saved["inferenceGatewayBaseUrl"], "http://127.0.0.1:18080")
         self.assertEqual(saved["inferenceGatewayApiKey"], "secret-value")
-        self.assertEqual(saved["inferenceGatewayAuthScheme"], "bearer")
+        self.assertEqual(saved["inferenceGatewayAuthScheme"], "x-api-key")
+        self.assertEqual(saved["inferenceGatewayHeaders"], ["x-api-key: secret-value"])
         self.assertEqual(saved["inferenceModels"], ["model-a", "model-b"])
         self.assertIs(saved["isClaudeCodeForDesktopEnabled"], True)
 
@@ -525,6 +550,7 @@ class ProviderConfigTests(unittest.TestCase):
                 "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
                 "inferenceGatewayApiKey": "secret-value",
                 "inferenceGatewayAuthScheme": "bearer",
+                "inferenceGatewayHeaders": ["x-api-key: secret-value"],
                 "inferenceModels": ["model-a"],
                 "note": "keep me",
             }, handle)
@@ -537,6 +563,26 @@ class ProviderConfigTests(unittest.TestCase):
         with open(entry_path, encoding="utf-8") as handle:
             saved = json.load(handle)
         self.assertEqual(saved, {"note": "keep me"})
+
+    def test_macos_apply_config_entrypoint_forwards_auth_scheme_and_headers(self):
+        with patch("backend.registry._os_name", return_value="mac"):
+            with patch("backend.registry.serialize_inference_models", return_value='["model-a"]'):
+                with patch("backend.registry._mac_apply_config", return_value={"success": True}) as mac_apply:
+                    result = registry.apply_config(
+                        "https://api.example.com/anthropic",
+                        gateway_api_key="provider-key",
+                        auth_scheme="x-api-key",
+                        gateway_headers='["x-api-key: provider-key"]',
+                    )
+
+        self.assertTrue(result["success"])
+        mac_apply.assert_called_once_with(
+            "https://api.example.com/anthropic",
+            "provider-key",
+            '["model-a"]',
+            "x-api-key",
+            '["x-api-key: provider-key"]',
+        )
 
     def test_elevated_registry_script_does_not_contain_plain_gateway_key(self):
         captured = {}
