@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 import threading
 import time
 from urllib.parse import urlparse
@@ -34,6 +35,17 @@ from backend.proxy import (
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 
+def _popen_hidden(command: list[str]):
+    """启动外部程序时避免 Windows 弹出黑色终端窗口。"""
+    kwargs = {"close_fds": True}
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        kwargs["startupinfo"] = startupinfo
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return subprocess.Popen(command, **kwargs)
+
+
 def _public_provider(provider: Optional[dict]) -> Optional[dict]:
     """返回给前端展示的 provider，避免泄露 API Key。"""
     if not provider:
@@ -62,6 +74,42 @@ def _parse_inference_models(raw_value: str) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
+def desktop_config_target_for_provider(provider: Optional[dict], settings: Optional[dict] = None) -> dict:
+    """生成 Claude Desktop 写入目标。
+
+    Anthropic 兼容 provider 直接写真实地址和真实 Key；OpenAI Chat 等需要转换
+    的实验接口才保留本地转发模式。
+    """
+    settings = settings or cfg.get_settings()
+    api_format = normalize_api_format((provider or {}).get("apiFormat", "anthropic"))
+    requires_proxy = api_format != "anthropic" or not provider
+    if requires_proxy:
+        proxy_port = settings.get("proxyPort", 18080)
+        return {
+            "baseUrl": f"http://127.0.0.1:{proxy_port}",
+            "apiKey": cfg.get_or_create_gateway_api_key(),
+            "authScheme": "bearer",
+            "gatewayHeaders": "",
+            "provider": provider,
+            "providers": None,
+            "exposeAll": False,
+            "requiresProxy": True,
+            "mode": "local_proxy",
+        }
+    api_key = provider.get("apiKey") or ""
+    return {
+        "baseUrl": str(provider.get("baseUrl") or "").rstrip("/"),
+        "apiKey": api_key,
+        "authScheme": provider.get("authScheme") or "bearer",
+        "gatewayHeaders": registry.serialize_gateway_headers(provider.get("extraHeaders"), api_key),
+        "provider": provider,
+        "providers": None,
+        "exposeAll": False,
+        "requiresProxy": False,
+        "mode": "direct_provider",
+    }
+
+
 def _desktop_health(
     desktop_status: dict,
     proxy_port: int,
@@ -71,7 +119,10 @@ def _desktop_health(
 ) -> dict:
     """判断 Claude Desktop 配置是否仍指向本工具当前 provider。"""
     keys = desktop_status.get("keys") or {}
-    expected_base_url = f"http://127.0.0.1:{proxy_port}"
+    settings = dict(cfg.get_settings())
+    settings["proxyPort"] = proxy_port
+    target = desktop_config_target_for_provider(provider, settings)
+    expected_base_url = str(target.get("baseUrl") or "").rstrip("/")
     actual_base_url = str(keys.get("inferenceGatewayBaseUrl") or "").rstrip("/")
     issues = []
 
@@ -89,9 +140,7 @@ def _desktop_health(
 
     inference_models = _parse_inference_models(str(keys.get("inferenceModels") or ""))
     target_models = (
-        registry.all_provider_inference_models(providers or [])
-        if expose_all
-        else registry.provider_inference_models(provider)
+        registry.provider_inference_models(provider)
     )
     one_million_models = [
         str(item.get("name"))
@@ -120,6 +169,8 @@ def _desktop_health(
         "oneMillionReady": one_million_ready,
         "expectedBaseUrl": expected_base_url,
         "actualBaseUrl": actual_base_url,
+        "mode": target.get("mode"),
+        "requiresProxy": bool(target.get("requiresProxy")),
         "issues": issues,
     }
 
@@ -130,22 +181,21 @@ def _sync_desktop_for_active_provider() -> dict:
     if not provider:
         return {"attempted": False, "success": False, "message": "没有默认提供商"}
 
-    status = registry.get_config_status()
-    if not status.get("configured"):
-        return {"attempted": False, "success": True, "message": "Claude 桌面版尚未由本工具配置"}
-
-    proxy_port = cfg.get_settings().get("proxyPort", 18080)
     settings = cfg.get_settings()
-    expose_all = bool(settings.get("exposeAllProviderModels"))
+    target = desktop_config_target_for_provider(provider, settings)
     result = registry.apply_config(
-        f"http://127.0.0.1:{proxy_port}",
-        gateway_api_key=cfg.get_or_create_gateway_api_key(),
-        provider=provider,
-        providers=cfg.get_providers() if expose_all else None,
-        expose_all=expose_all,
+        target["baseUrl"],
+        gateway_api_key=target["apiKey"],
+        provider=target["provider"],
+        providers=target["providers"],
+        expose_all=target["exposeAll"],
+        auth_scheme=target["authScheme"],
+        gateway_headers=target["gatewayHeaders"],
     )
     return {
         "attempted": True,
+        "mode": target["mode"],
+        "requiresProxy": target["requiresProxy"],
         **result,
     }
 
@@ -299,7 +349,7 @@ def _provider_compatibility(provider: dict) -> dict:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.12")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.13")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
@@ -334,12 +384,15 @@ def create_admin_app() -> FastAPI:
         desktop_status = registry.get_config_status()
         settings = cfg.get_settings()
         proxy_port = settings.get("proxyPort", 18080)
-        expose_all = bool(settings.get("exposeAllProviderModels"))
+        expose_all = False
+        target = desktop_config_target_for_provider(active, settings)
 
         return {
             "desktopConfigured": desktop_status.get("configured", False),
             "proxyRunning": _proxy_running,
             "proxyPort": proxy_port,
+            "desktopMode": target["mode"],
+            "desktopRequiresProxy": target["requiresProxy"],
             "activeProvider": _public_provider(active),
             "activeProviderId": active["id"] if active else None,
             "providerCount": len(providers),
@@ -620,7 +673,7 @@ def create_admin_app() -> FastAPI:
             proxy_port,
             cfg.get_active_provider(),
             cfg.get_providers(),
-            bool(settings.get("exposeAllProviderModels")),
+            False,
         )
         return status
 
@@ -628,19 +681,22 @@ def create_admin_app() -> FastAPI:
     async def apply_desktop_config(request: Request):
         """应用 Desktop 配置到注册表"""
         data = await request.json() if request.headers.get("content-type") == "application/json" else {}
-        proxy_port = data.get("port", cfg.get_settings().get("proxyPort", 18080))
-        base_url = f"http://127.0.0.1:{proxy_port}"
-        gateway_api_key = cfg.get_or_create_gateway_api_key()
         active_provider = cfg.get_active_provider()
         settings = cfg.get_settings()
-        expose_all = bool(settings.get("exposeAllProviderModels"))
-        return registry.apply_config(
-            base_url,
-            gateway_api_key=gateway_api_key,
-            provider=active_provider,
-            providers=cfg.get_providers() if expose_all else None,
-            expose_all=expose_all,
+        if data.get("port"):
+            settings = dict(settings)
+            settings["proxyPort"] = int(data["port"])
+        target = desktop_config_target_for_provider(active_provider, settings)
+        result = registry.apply_config(
+            target["baseUrl"],
+            gateway_api_key=target["apiKey"],
+            provider=target["provider"],
+            providers=target["providers"],
+            expose_all=target["exposeAll"],
+            auth_scheme=target["authScheme"],
+            gateway_headers=target["gatewayHeaders"],
         )
+        return {**result, "mode": target["mode"], "requiresProxy": target["requiresProxy"]}
 
     @app.post("/api/desktop/clear")
     async def clear_desktop_config():
@@ -753,7 +809,7 @@ def create_admin_app() -> FastAPI:
             if not installer_path:
                 raise updater.UpdateCheckError("下载安装包失败")
             command = updater.install_command(installer_path, result.get("platform") or platform)
-            subprocess.Popen(command, close_fds=True)
+            _popen_hidden(command)
             is_macos = (result.get("platform") or platform).startswith("macos-")
             return {
                 **result,

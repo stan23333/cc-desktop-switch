@@ -6,6 +6,7 @@
 .tmp-*/
 .playwright-mcp/
 .kiro-review/
+.claude/
 .DS_Store
 __pycache__/
 *.pyc

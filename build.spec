@@ -95,6 +95,7 @@ if ONEFILE:
         codesign_identity=None,
         entitlements_file=None,
         icon=ICON,
+        uac_admin=True,
     )
 else:
     exe = EXE(
@@ -116,6 +117,7 @@ else:
         codesign_identity=None,
         entitlements_file=None,
         icon=ICON,
+        uac_admin=True,
     )
     COLLECT(
         exe,

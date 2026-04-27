@@ -1059,8 +1059,10 @@
     try {
       const provider = await saveProviderFromForm();
       await CCApi.setDefaultProvider(provider.id);
-      await CCApi.configureDesktop();
-      await CCApi.startProxy();
+      const desktopResult = await CCApi.configureDesktop();
+      if (desktopResult.requiresProxy) {
+        await CCApi.startProxy();
+      }
       editingProviderId = null;
       selectedPreset = null;
       window.location.hash = "dashboard";
@@ -1085,7 +1087,9 @@
     try {
       if (action === "set-default") {
         const result = await CCApi.setDefaultProvider(actionEl.dataset.id);
-        await CCApi.startProxy();
+        if (result.desktopSync?.requiresProxy) {
+          await CCApi.startProxy();
+        }
         await renderProviderCards("#dashboardProviderCards", { includePresets: true });
         await renderProviders();
         await renderDashboard();

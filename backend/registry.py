@@ -18,6 +18,7 @@ DESKTOP_CONFIG = {
     "inferenceProvider": ("gateway", str),
     "inferenceGatewayApiKey": ("", str),
     "inferenceGatewayAuthScheme": ("bearer", str),
+    "inferenceGatewayHeaders": ("[]", str),
     "inferenceModels": ('["sonnet","haiku","opus"]', str),
     "inferenceGatewayBaseUrl": ("http://127.0.0.1:18080", str),
     "isClaudeCodeForDesktopEnabled": (1, int),
@@ -50,9 +51,25 @@ def _desktop_model_items(items: list) -> list:
 def _safe_config_value(name: str, value) -> str:
     """返回可展示的配置值，避免把密钥暴露给前端。"""
     lowered = name.lower()
-    if any(token in lowered for token in ("key", "token", "secret", "authorization")):
+    if any(token in lowered for token in ("key", "token", "secret", "authorization", "headers")):
         return "******" if value else ""
     return str(value)
+
+
+def serialize_gateway_headers(extra_headers: Optional[dict], api_key: str = "") -> str:
+    """把 provider extraHeaders 转为 Claude 3P policy 的额外请求头。"""
+    if not isinstance(extra_headers, dict) or not extra_headers:
+        return ""
+    headers = []
+    for name, value in extra_headers.items():
+        header_name = str(name or "").strip()
+        if not header_name:
+            continue
+        header_value = str(value or "")
+        if "{apiKey}" in header_value:
+            header_value = header_value.replace("{apiKey}", api_key or "")
+        headers.append(f"{header_name}: {header_value}")
+    return json.dumps(headers, ensure_ascii=False, separators=(",", ":")) if headers else ""
 
 def _os_name() -> str:
     """返回 'win', 'mac', 'linux'"""
@@ -157,7 +174,7 @@ def _run_elevated_powershell(script_text: str) -> tuple[bool, str]:
             "$p = Start-Process -FilePath 'powershell.exe' "
             "-ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"
             f"{_ps_single_quote(script_path)}) "
-            "-Verb RunAs -Wait -PassThru; exit $p.ExitCode"
+            "-WindowStyle Hidden -Verb RunAs -Wait -PassThru; exit $p.ExitCode"
         )
         result = subprocess.run(
             ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
@@ -178,7 +195,13 @@ def _run_elevated_powershell(script_text: str) -> tuple[bool, str]:
             pass
 
 
-def _win_apply_config_elevated(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
+def _win_apply_config_elevated(
+    base_url: str,
+    gateway_api_key: str = "",
+    inference_models: str = "",
+    auth_scheme: str = "bearer",
+    gateway_headers: str = "",
+) -> dict:
     """权限不足时通过 UAC 写入当前用户的 Claude Desktop policy。"""
     sid = _current_user_sid()
     target_path = f"Registry::HKEY_USERS\\{sid}\\{REGISTRY_PATH}" if sid else r"HKCU:\SOFTWARE\Policies\Claude"
@@ -194,10 +217,13 @@ if (-not (Test-Path -LiteralPath $path)) {{
 $baseUrl = DecodeUtf8 '{_b64_utf8(base_url)}'
 $gatewayApiKey = DecodeUtf8 '{_b64_utf8(gateway_api_key)}'
 $inferenceModels = DecodeUtf8 '{_b64_utf8(inference_models or DESKTOP_CONFIG["inferenceModels"][0])}'
+$authScheme = DecodeUtf8 '{_b64_utf8(auth_scheme or "bearer")}'
+$gatewayHeaders = DecodeUtf8 '{_b64_utf8(gateway_headers or "[]")}'
 New-ItemProperty -LiteralPath $path -Name 'inferenceProvider' -Value 'gateway' -PropertyType String -Force | Out-Null
 New-ItemProperty -LiteralPath $path -Name 'inferenceGatewayBaseUrl' -Value $baseUrl -PropertyType String -Force | Out-Null
 New-ItemProperty -LiteralPath $path -Name 'inferenceGatewayApiKey' -Value $gatewayApiKey -PropertyType String -Force | Out-Null
-New-ItemProperty -LiteralPath $path -Name 'inferenceGatewayAuthScheme' -Value 'bearer' -PropertyType String -Force | Out-Null
+New-ItemProperty -LiteralPath $path -Name 'inferenceGatewayAuthScheme' -Value $authScheme -PropertyType String -Force | Out-Null
+New-ItemProperty -LiteralPath $path -Name 'inferenceGatewayHeaders' -Value $gatewayHeaders -PropertyType String -Force | Out-Null
 New-ItemProperty -LiteralPath $path -Name 'inferenceModels' -Value $inferenceModels -PropertyType String -Force | Out-Null
 New-ItemProperty -LiteralPath $path -Name 'isClaudeCodeForDesktopEnabled' -Value 1 -PropertyType DWord -Force | Out-Null
 New-ItemProperty -LiteralPath $path -Name '{CCDS_MARKER}' -Value 'true' -PropertyType String -Force | Out-Null
@@ -232,10 +258,16 @@ def _win_get_config_status() -> dict:
     return result
 
 
-def _win_apply_config(base_url: str, gateway_api_key: str = "", inference_models: str = "") -> dict:
+def _win_apply_config(
+    base_url: str,
+    gateway_api_key: str = "",
+    inference_models: str = "",
+    auth_scheme: str = "bearer",
+    gateway_headers: str = "",
+) -> dict:
     key = _win_get_key(read_only=False)
     if key is None:
-        return _win_apply_config_elevated(base_url, gateway_api_key, inference_models)
+        return _win_apply_config_elevated(base_url, gateway_api_key, inference_models, auth_scheme, gateway_headers)
     import winreg
     try:
         inference_models = inference_models or DESKTOP_CONFIG["inferenceModels"][0]
@@ -243,7 +275,8 @@ def _win_apply_config(base_url: str, gateway_api_key: str = "", inference_models
             "inferenceProvider": ("gateway", winreg.REG_SZ),
             "inferenceGatewayBaseUrl": (base_url, winreg.REG_SZ),
             "inferenceGatewayApiKey": (gateway_api_key, winreg.REG_SZ),
-            "inferenceGatewayAuthScheme": ("bearer", winreg.REG_SZ),
+            "inferenceGatewayAuthScheme": (auth_scheme or "bearer", winreg.REG_SZ),
+            "inferenceGatewayHeaders": (gateway_headers or "[]", winreg.REG_SZ),
             "inferenceModels": (inference_models, winreg.REG_SZ),
             "isClaudeCodeForDesktopEnabled": (1, winreg.REG_DWORD),
             CCDS_MARKER: ("true", winreg.REG_SZ),
@@ -252,7 +285,7 @@ def _win_apply_config(base_url: str, gateway_api_key: str = "", inference_models
             winreg.SetValueEx(key, name, 0, type_, value)
         return {"success": True, "message": "Desktop 3P 配置已应用"}
     except PermissionError:
-        return _win_apply_config_elevated(base_url, gateway_api_key, inference_models)
+        return _win_apply_config_elevated(base_url, gateway_api_key, inference_models, auth_scheme, gateway_headers)
     except Exception as e:
         return {"success": False, "message": f"配置失败: {str(e)}"}
     finally:
@@ -779,12 +812,14 @@ def apply_config(
     provider: Optional[dict] = None,
     providers: Optional[list[dict]] = None,
     expose_all: bool = False,
+    auth_scheme: str = "bearer",
+    gateway_headers: str = "",
 ) -> dict:
     """应用 Desktop 3P 配置"""
     inference_models = serialize_inference_models(provider, providers=providers, expose_all=expose_all)
     os_name = _os_name()
     if os_name == "win":
-        return _win_apply_config(base_url, gateway_api_key, inference_models)
+        return _win_apply_config(base_url, gateway_api_key, inference_models, auth_scheme, gateway_headers)
     elif os_name == "mac":
         return _mac_apply_config(base_url, gateway_api_key, inference_models)
     return _not_supported()

@@ -183,6 +183,9 @@ class ProviderConfigTests(unittest.TestCase):
 
     def test_registry_inference_models_mark_deepseek_1m(self):
         provider = {
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
             "models": {
                 "sonnet": "deepseek-v4-pro[1m]",
                 "haiku": "deepseek-v4-flash",
@@ -548,6 +551,7 @@ class ProviderConfigTests(unittest.TestCase):
                     "http://127.0.0.1:18080",
                     "plain-gateway-key",
                     '[{"name":"deepseek-v4-pro[1m]","supports1m":true}]',
+                    gateway_headers='["x-api-key: plain-gateway-key"]',
                 )
 
         self.assertTrue(result["success"])
@@ -582,6 +586,7 @@ class ProviderConfigTests(unittest.TestCase):
             "inferenceGatewayBaseUrl",
             "inferenceGatewayApiKey",
             "inferenceGatewayAuthScheme",
+            "inferenceGatewayHeaders",
             "inferenceModels",
             "isClaudeCodeForDesktopEnabled",
             "ccds_managed",
@@ -595,6 +600,7 @@ class ProviderConfigTests(unittest.TestCase):
                 "inferenceGatewayBaseUrl",
                 "inferenceGatewayApiKey",
                 "inferenceGatewayAuthScheme",
+                "inferenceGatewayHeaders",
                 "inferenceModels",
                 "isClaudeCodeForDesktopEnabled",
                 "ccds_managed",
@@ -753,6 +759,9 @@ class ProviderConfigTests(unittest.TestCase):
 
     def test_desktop_health_detects_stale_gateway_and_missing_1m(self):
         provider = {
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
             "models": {
                 "sonnet": "deepseek-v4-pro[1m]",
                 "haiku": "deepseek-v4-flash",
@@ -763,7 +772,7 @@ class ProviderConfigTests(unittest.TestCase):
         old_status = {
             "configured": False,
             "keys": {
-                "inferenceGatewayBaseUrl": "https://api.deepseek.com/anthropic",
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
                 "inferenceModels": '["sonnet","haiku","opus"]',
             },
         }
@@ -778,7 +787,7 @@ class ProviderConfigTests(unittest.TestCase):
         current_status = {
             "configured": True,
             "keys": {
-                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceGatewayBaseUrl": "https://api.deepseek.com/anthropic",
                 "inferenceModels": '[{"name":"deepseek-v4-pro[1m]","supports1m":true},{"name":"deepseek-v4-flash"}]',
             },
         }
@@ -790,6 +799,9 @@ class ProviderConfigTests(unittest.TestCase):
 
     def test_desktop_health_detects_capability_based_1m_models(self):
         provider = {
+            "baseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
             "models": {
                 "sonnet": "qwen3.6-plus",
                 "haiku": "qwen3.6-flash",
@@ -805,7 +817,7 @@ class ProviderConfigTests(unittest.TestCase):
         missing = _desktop_health({
             "configured": True,
             "keys": {
-                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceGatewayBaseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
                 "inferenceModels": '[{"name":"qwen3.6-plus"},{"name":"qwen3.6-flash"}]',
             },
         }, 18080, provider)
@@ -813,7 +825,7 @@ class ProviderConfigTests(unittest.TestCase):
         ready = _desktop_health({
             "configured": True,
             "keys": {
-                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceGatewayBaseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
                 "inferenceModels": '[{"name":"qwen3.6-plus","supports1m":true},{"name":"qwen3.6-flash","supports1m":true}]',
             },
         }, 18080, provider)
@@ -1418,7 +1430,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(observed["platform"], "macos-arm64")
 
-    def test_set_default_provider_syncs_desktop_models_when_managed(self):
+    def test_set_default_provider_syncs_desktop_models_to_direct_provider_policy(self):
         first = cfg.add_provider({
             "name": "DeepSeek",
             "baseUrl": "https://api.deepseek.com/anthropic",
@@ -1434,22 +1446,26 @@ class AdminApiTests(unittest.TestCase):
         })
         self.assertEqual(cfg.load_config()["activeProvider"], first["id"])
 
-        with patch("backend.main.registry.get_config_status", return_value={"configured": True}):
-            with patch("backend.main.registry.apply_config", return_value={"success": True}) as apply_config:
-                response = self.client.put(
-                    f"/api/providers/{second['id']}/default",
-                    headers={"x-ccds-request": "1"},
-                )
+        with patch("backend.main.registry.apply_config", return_value={"success": True}) as apply_config:
+            response = self.client.put(
+                f"/api/providers/{second['id']}/default",
+                headers={"x-ccds-request": "1"},
+            )
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data["desktopSync"]["attempted"])
         self.assertTrue(data["desktopSync"]["success"])
-        self.assertEqual(apply_config.call_args.args[0], "http://127.0.0.1:18080")
+        self.assertEqual(apply_config.call_args.args[0], "https://api.moonshot.cn/anthropic")
+        self.assertEqual(apply_config.call_args.kwargs["gateway_api_key"], "")
+        self.assertEqual(apply_config.call_args.kwargs["auth_scheme"], "bearer")
+        self.assertEqual(apply_config.call_args.kwargs["gateway_headers"], "")
+        self.assertFalse(apply_config.call_args.kwargs["expose_all"])
+        self.assertIsNone(apply_config.call_args.kwargs["providers"])
         self.assertEqual(apply_config.call_args.kwargs["provider"]["models"]["sonnet"], "kimi-k2.6")
         self.assertEqual(cfg.load_config()["activeProvider"], second["id"])
 
-    def test_set_default_provider_syncs_all_models_when_expose_all_is_enabled(self):
+    def test_set_default_provider_keeps_single_provider_when_expose_all_is_enabled(self):
         first = cfg.add_provider({
             "id": "deepseek",
             "name": "DeepSeek",
@@ -1468,20 +1484,17 @@ class AdminApiTests(unittest.TestCase):
         })
         cfg.update_settings({"exposeAllProviderModels": True})
 
-        with patch("backend.main.registry.get_config_status", return_value={"configured": True}):
-            with patch("backend.main.registry.apply_config", return_value={"success": True}) as apply_config:
-                response = self.client.put(
-                    f"/api/providers/{second['id']}/default",
-                    headers={"x-ccds-request": "1"},
-                )
+        with patch("backend.main.registry.apply_config", return_value={"success": True}) as apply_config:
+            response = self.client.put(
+                f"/api/providers/{second['id']}/default",
+                headers={"x-ccds-request": "1"},
+            )
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["desktopSync"]["attempted"])
-        self.assertTrue(apply_config.call_args.kwargs["expose_all"])
-        self.assertEqual(
-            [item["id"] for item in apply_config.call_args.kwargs["providers"]],
-            [first["id"], second["id"]],
-        )
+        self.assertFalse(apply_config.call_args.kwargs["expose_all"])
+        self.assertIsNone(apply_config.call_args.kwargs["providers"])
+        self.assertEqual(apply_config.call_args.kwargs["provider"]["id"], second["id"])
 
     def test_provider_compatibility_report_marks_openai_as_experimental(self):
         cfg.add_provider({
@@ -1520,7 +1533,7 @@ class AdminApiTests(unittest.TestCase):
 
         with patch("backend.main.updater.current_platform", return_value="windows-x64"):
             with patch("backend.main.updater.download_update", fake_download_update):
-                with patch("backend.main.subprocess.Popen") as popen:
+                with patch("backend.main._popen_hidden") as popen:
                     response = self.client.post(
                         "/api/update/install",
                         headers={"x-ccds-request": "1"},
@@ -1546,7 +1559,7 @@ class AdminApiTests(unittest.TestCase):
 
         with patch("backend.main.updater.current_platform", return_value="windows-x64"):
             with patch("backend.main.updater.download_update", fake_download_update):
-                with patch("backend.main.subprocess.Popen") as popen:
+                with patch("backend.main._popen_hidden") as popen:
                     response = self.client.post(
                         "/api/update/install",
                         headers={"x-ccds-request": "1"},
@@ -1555,10 +1568,7 @@ class AdminApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["installerStarted"])
-        popen.assert_called_once_with(
-            [r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe"],
-            close_fds=True,
-        )
+        popen.assert_called_once_with([r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe"])
 
     def test_update_install_opens_downloaded_macos_package(self):
         async def fake_download_update(url, current_version, platform="windows-x64", target_dir=None):
@@ -1575,7 +1585,7 @@ class AdminApiTests(unittest.TestCase):
 
         with patch("backend.main.updater.current_platform", return_value="macos-arm64"):
             with patch("backend.main.updater.download_update", fake_download_update):
-                with patch("backend.main.subprocess.Popen") as popen:
+                with patch("backend.main._popen_hidden") as popen:
                     response = self.client.post(
                         "/api/update/install",
                         headers={"x-ccds-request": "1"},
@@ -1585,10 +1595,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["installerStarted"])
         self.assertEqual(response.json()["platform"], "macos-arm64")
-        popen.assert_called_once_with(
-            ["open", "/tmp/CC-Desktop-Switch-v1.0.11-macOS-arm64.pkg"],
-            close_fds=True,
-        )
+        popen.assert_called_once_with(["open", "/tmp/CC-Desktop-Switch-v1.0.11-macOS-arm64.pkg"])
 
 
 class ProxyConversionTests(unittest.TestCase):
@@ -1867,7 +1874,7 @@ class ProxyAppTests(unittest.TestCase):
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(allowed.json()["data"][0]["id"], "deepseek-v4-pro[1m]")
 
-    def test_models_endpoint_returns_all_provider_aliases_when_enabled(self):
+    def test_models_endpoint_keeps_active_models_when_all_models_setting_is_hidden(self):
         cfg.add_provider({
             "id": "deepseek",
             "name": "DeepSeek",
@@ -1900,10 +1907,10 @@ class ProxyAppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         by_id = {item["id"]: item for item in response.json()["data"]}
-        self.assertTrue(by_id["deepseek/deepseek-v4-pro[1m]"]["supports1m"])
-        self.assertEqual(by_id["kimi/kimi-k2.6"]["display_name"], "Kimi / kimi-k2.6")
+        self.assertIn("deepseek-v4-pro[1m]", by_id)
+        self.assertNotIn("kimi/kimi-k2.6", by_id)
 
-    def test_messages_endpoint_routes_alias_model_to_matching_provider(self):
+    def test_messages_endpoint_ignores_alias_routing_when_all_models_setting_is_hidden(self):
         cfg.add_provider({
             "id": "deepseek",
             "name": "DeepSeek",
@@ -1952,7 +1959,7 @@ class ProxyAppTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(observed, {"model": "kimi-k2.6", "provider": "kimi"})
+        self.assertEqual(observed, {"model": "deepseek-v4-pro", "provider": "deepseek"})
 
     def test_messages_endpoint_rejects_when_gateway_key_has_not_been_created(self):
         cfg.add_provider({
@@ -2191,16 +2198,17 @@ class DesktopTrayControllerTests(unittest.TestCase):
         tray.icon = FakeTrayIcon()
 
         self.assertEqual(cfg.load_config()["activeProvider"], first["id"])
-        with patch.object(tray, "show_desktop_restart_dialog") as restart_dialog:
-            self.assertTrue(tray.switch_provider(second["id"]))
+        with patch("main.registry.apply_config", return_value={"success": True}):
+            with patch("main._start_proxy_server", return_value=True):
+                with patch.object(tray, "show_desktop_restart_dialog") as restart_dialog:
+                    self.assertTrue(tray.switch_provider(second["id"]))
 
         self.assertEqual(cfg.load_config()["activeProvider"], second["id"])
         self.assertEqual(tray.icon.updated, 1)
         self.assertIn("Kimi", tray.icon.notifications[0][1])
-        restart_dialog.assert_called_once()
-        self.assertEqual(restart_dialog.call_args.args[0]["id"], second["id"])
+        restart_dialog.assert_not_called()
 
-    def test_switch_provider_syncs_desktop_models_when_managed(self):
+    def test_switch_provider_syncs_direct_desktop_policy(self):
         first = cfg.add_provider({
             "name": "DeepSeek",
             "baseUrl": "https://api.deepseek.com/anthropic",
@@ -2220,19 +2228,23 @@ class DesktopTrayControllerTests(unittest.TestCase):
         tray.icon = FakeTrayIcon()
         observed = {}
 
-        with patch("main.registry.get_config_status", return_value={"configured": True}):
-            with patch("main.registry.apply_config", return_value={"success": True}) as apply_config:
+        with patch("main.registry.apply_config", return_value={"success": True}) as apply_config:
+            with patch("main._start_proxy_server") as start_proxy:
                 with patch.object(tray, "show_desktop_restart_dialog") as restart_dialog:
                     self.assertTrue(tray.switch_provider(second["id"]))
-                observed["provider"] = apply_config.call_args.kwargs["provider"]
-                observed["base_url"] = apply_config.call_args.args[0]
+            observed["provider"] = apply_config.call_args.kwargs["provider"]
+            observed["base_url"] = apply_config.call_args.args[0]
+            observed["providers"] = apply_config.call_args.kwargs["providers"]
+            observed["expose_all"] = apply_config.call_args.kwargs["expose_all"]
 
         self.assertEqual(cfg.load_config()["activeProvider"], second["id"])
         self.assertEqual(observed["provider"]["models"]["sonnet"], "kimi-k2.6")
-        self.assertEqual(observed["base_url"], "http://127.0.0.1:18080")
-        self.assertIn("桌面版模型已同步", tray.icon.notifications[0][1])
-        restart_dialog.assert_called_once()
-        self.assertIs(restart_dialog.call_args.args[1], True)
+        self.assertEqual(observed["base_url"], "https://api.moonshot.cn/anthropic")
+        self.assertIsNone(observed["providers"])
+        self.assertFalse(observed["expose_all"])
+        self.assertIn("桌面版配置已同步", tray.icon.notifications[0][1])
+        start_proxy.assert_not_called()
+        restart_dialog.assert_not_called()
 
     def test_switch_provider_does_not_show_restart_dialog_when_provider_is_unchanged(self):
         provider = cfg.add_provider({

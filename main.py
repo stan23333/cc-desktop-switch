@@ -14,13 +14,13 @@ from urllib.request import urlopen
 
 import uvicorn
 
-from backend.main import create_admin_app, _start_proxy_server, _stop_proxy_server
+from backend.main import create_admin_app, desktop_config_target_for_provider, _start_proxy_server, _stop_proxy_server
 from backend import config as cfg
 from backend import registry
 
 
 APP_NAME = "CC Desktop Switch"
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
 _macos_app_delegate = None
@@ -281,9 +281,8 @@ class DesktopTrayController:
         for provider in providers:
             provider_id = provider.get("id")
             name = provider.get("name", "Unnamed Provider")
-            label = f"✓ {name}" if provider_id == active_id else name
             items.append(self.pystray.MenuItem(
-                label,
+                name,
                 self._make_provider_switcher(provider_id),
                 checked=lambda item, pid=provider_id: cfg.load_config().get("activeProvider") == pid,
             ))
@@ -305,16 +304,22 @@ class DesktopTrayController:
         desktop_message = ""
         desktop_synced = False
         try:
-            status = registry.get_config_status()
-            if status.get("configured") and provider:
-                proxy_port = cfg.get_settings().get("proxyPort", 18080)
+            if provider:
+                settings = cfg.get_settings()
+                target = desktop_config_target_for_provider(provider, settings)
                 result = registry.apply_config(
-                    f"http://127.0.0.1:{proxy_port}",
-                    gateway_api_key=cfg.get_or_create_gateway_api_key(),
-                    provider=provider,
+                    target["baseUrl"],
+                    gateway_api_key=target["apiKey"],
+                    provider=target["provider"],
+                    providers=target["providers"],
+                    expose_all=target["exposeAll"],
+                    auth_scheme=target["authScheme"],
+                    gateway_headers=target["gatewayHeaders"],
                 )
+                if target.get("requiresProxy"):
+                    _start_proxy_server(settings.get("proxyPort", 18080))
                 desktop_synced = bool(result.get("success"))
-                desktop_message = "，桌面版模型已同步" if result.get("success") else "，请重新一键应用到 Claude 桌面版"
+                desktop_message = "，桌面版配置已同步，重启 Claude 后生效" if result.get("success") else "，请重新一键应用到 Claude 桌面版"
         except Exception as exc:
             safe_print(f"sync desktop config failed: {exc}")
             desktop_message = "，请重新一键应用到 Claude 桌面版"
@@ -324,8 +329,6 @@ class DesktopTrayController:
                 self.icon.notify(f"已切换到 {provider.get('name', provider_id)}{desktop_message}", APP_NAME)
         except Exception:
             pass
-        if provider and provider_id != previous_id:
-            self.show_desktop_restart_dialog(provider, desktop_synced)
         return True
 
     def show_desktop_restart_dialog(self, provider: dict, desktop_synced: bool = False):

@@ -14,7 +14,7 @@ BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
 DEFAULT_UPDATE_URL = "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
 
 DEFAULT_CONFIG = {
-    "version": "1.0.12",
+    "version": "1.0.13",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],
@@ -478,6 +478,8 @@ def get_settings() -> dict:
     config = load_config()
     settings = dict(DEFAULT_CONFIG["settings"])
     settings.update(config.get("settings", {}))
+    # 统一模型菜单暂不开放，避免不同厂商能力混在一起导致 1M / 思维深度失效。
+    settings["exposeAllProviderModels"] = False
     if not settings.get("updateUrl"):
         settings["updateUrl"] = DEFAULT_UPDATE_URL
     return settings
@@ -489,6 +491,7 @@ def update_settings(settings: dict) -> dict:
     current = dict(DEFAULT_CONFIG["settings"])
     current.update(config.get("settings", {}))
     current.update(settings)
+    current["exposeAllProviderModels"] = False
     if not current.get("updateUrl"):
         current["updateUrl"] = DEFAULT_UPDATE_URL
     config["settings"] = current
