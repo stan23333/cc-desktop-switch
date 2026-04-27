@@ -2344,6 +2344,8 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn('id="settingsInstallUpdate"', html)
         self.assertIn('id="restartReminderModal"', html)
         self.assertIn('id="restartReminderAck"', html)
+        self.assertIn("switch-board-actions", html)
+        self.assertIn("dashboard-clear-button", html)
         self.assertIn('data-i18n="dashboard.clearDesktopConfig"', html)
         self.assertIn('data-action="clear-desktop"', html)
         self.assertIn("installUpdate(updateUrl)", api_js)
