@@ -1241,7 +1241,12 @@
       if (action === "clear-desktop") {
         if (!window.confirm(t("confirm.desktopClear"))) return;
         await CCApi.clearDesktop();
-        await renderDesktop();
+        const route = routeFromHash();
+        if (route === "dashboard") {
+          await renderDashboard();
+        } else if (route === "desktop") {
+          await renderDesktop();
+        }
         showToast(t("toast.desktopCleared"));
       }
 

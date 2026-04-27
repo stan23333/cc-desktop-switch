@@ -25,6 +25,12 @@ DESKTOP_CONFIG = {
 
 # ── 辅助函数 ──
 
+def _managed_policy_names(names: list[str]) -> list[str]:
+    """返回本工具写入、清除时也应删除的 Claude policy 项。"""
+    managed = set(DESKTOP_CONFIG.keys()) | {CCDS_MARKER}
+    return [name for name in names if name in managed]
+
+
 def _desktop_model_items(items: list) -> list:
     """只保留 Claude Desktop policy 支持的模型字段。"""
     cleaned = []
@@ -271,7 +277,7 @@ def _win_clear_config() -> dict:
     finally:
         winreg.CloseKey(key)
 
-    managed = [n for n in names if n.startswith("inference") or n == CCDS_MARKER]
+    managed = _managed_policy_names(names)
     if not managed:
         return {"success": True, "message": "没有需要清除的配置"}
 

@@ -576,6 +576,31 @@ class ProviderConfigTests(unittest.TestCase):
         )
         self.assertIn(expected_path, captured["script"])
 
+    def test_managed_policy_names_include_code_desktop_flag(self):
+        names = [
+            "inferenceProvider",
+            "inferenceGatewayBaseUrl",
+            "inferenceGatewayApiKey",
+            "inferenceGatewayAuthScheme",
+            "inferenceModels",
+            "isClaudeCodeForDesktopEnabled",
+            "ccds_managed",
+            "unrelatedPreference",
+        ]
+
+        self.assertEqual(
+            registry._managed_policy_names(names),
+            [
+                "inferenceProvider",
+                "inferenceGatewayBaseUrl",
+                "inferenceGatewayApiKey",
+                "inferenceGatewayAuthScheme",
+                "inferenceModels",
+                "isClaudeCodeForDesktopEnabled",
+                "ccds_managed",
+            ],
+        )
+
     def test_update_provider_preserves_or_clears_request_options_explicitly(self):
         provider = cfg.add_provider({
             "name": "DeepSeek",
@@ -2319,6 +2344,8 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn('id="settingsInstallUpdate"', html)
         self.assertIn('id="restartReminderModal"', html)
         self.assertIn('id="restartReminderAck"', html)
+        self.assertIn('data-i18n="dashboard.clearDesktopConfig"', html)
+        self.assertIn('data-action="clear-desktop"', html)
         self.assertIn("installUpdate(updateUrl)", api_js)
         self.assertIn("assets/providers/aliyun.ico", api_js)
         self.assertTrue((self.root / "frontend" / "assets" / "providers" / "aliyun.ico").exists())
@@ -2327,6 +2354,7 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn("toast.defaultUpdatedDesktop", app_js + i18n)
         self.assertIn("restartReminder.dontShow", i18n)
         self.assertIn("confirm.installUpdate", app_js + i18n)
+        self.assertIn("不会删除本工具里保存的提供商和 API Key", i18n)
         self.assertIn('class="panel model-menu-mode-panel" hidden aria-hidden="true"', html)
         self.assertIn('class="settings-row" hidden aria-hidden="true"', html)
         self.assertIn('data-action="toggle-model-menu-mode"', html)
