@@ -15,23 +15,16 @@
 普通用户推荐下载 Release 里的安装版：
 
 ```text
-CC-Desktop-Switch-v1.0.10-Windows-Setup.exe
+CC-Desktop-Switch-v1.0.11-Windows-Setup.exe
 ```
 
 也可以使用便携版：
 
 ```text
-CC-Desktop-Switch-v1.0.10-Windows-Portable.zip
+CC-Desktop-Switch-v1.0.11-Windows-Portable.zip
 ```
 
-macOS 用户可以下载对应的 DMG 或 PKG：
-
-```text
-CC-Desktop-Switch-v1.0.10-macOS-arm64.dmg
-CC-Desktop-Switch-v1.0.10-macOS-arm64.pkg
-```
-
-DMG 打开后把应用拖到“应用程序”；如果该位置已有旧版，Finder 会提示是否替换。PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。
+macOS 版本由 macOS 维护者单独同步。如果 Release 页面出现对应的 DMG 或 PKG，DMG 打开后把应用拖到“应用程序”；PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。
 
 macOS 版点击窗口左上角关闭按钮时会隐藏窗口并继续运行本机转发服务；再次点击 Dock 图标会恢复主窗口。需要停止转发并退出应用时，请使用 `Cmd+Q`、Dock 菜单的退出，或应用菜单里的退出项。
 
