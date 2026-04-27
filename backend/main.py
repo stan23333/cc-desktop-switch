@@ -713,7 +713,7 @@ def create_admin_app() -> FastAPI:
         return {"success": True, "settings": settings}
 
     @app.get("/api/update/check")
-    async def check_update(url: Optional[str] = None, current: Optional[str] = None):
+    async def check_update(url: Optional[str] = None, current: Optional[str] = None, platform: Optional[str] = None):
         """检查最新版本，不自动下载或安装。"""
         settings = cfg.get_settings()
         update_url = url or settings.get("updateUrl") or cfg.DEFAULT_UPDATE_URL
@@ -726,6 +726,7 @@ def create_admin_app() -> FastAPI:
             return await updater.check_update(
                 url=update_url,
                 current_version=current or cfg.DEFAULT_CONFIG.get("version", "1.0.0"),
+                platform=platform or updater.current_platform(),
             )
         except updater.UpdateCheckError as exc:
             return JSONResponse(
@@ -739,22 +740,30 @@ def create_admin_app() -> FastAPI:
         data = await request.json() if request.headers.get("content-type") == "application/json" else {}
         settings = cfg.get_settings()
         update_url = data.get("url") or settings.get("updateUrl") or cfg.DEFAULT_UPDATE_URL
+        platform = data.get("platform") or updater.current_platform()
         try:
             result = await updater.download_update(
                 url=update_url,
                 current_version=data.get("current") or cfg.DEFAULT_CONFIG.get("version", "1.0.0"),
+                platform=platform,
             )
             if not result.get("updateAvailable"):
                 return result
             installer_path = result.get("installerPath")
             if not installer_path:
                 raise updater.UpdateCheckError("下载安装包失败")
-            subprocess.Popen([installer_path], close_fds=True)
+            command = updater.install_command(installer_path, result.get("platform") or platform)
+            subprocess.Popen(command, close_fds=True)
+            is_macos = (result.get("platform") or platform).startswith("macos-")
             return {
                 **result,
                 "success": True,
                 "installerStarted": True,
-                "message": "安装包已下载并启动。安装器会沿用旧安装目录，并在安装前关闭正在运行的 CC Desktop Switch。",
+                "message": (
+                    "更新包已下载并打开。请按 macOS 提示完成安装。"
+                    if is_macos
+                    else "安装包已下载并启动。安装器会沿用旧安装目录，并在安装前关闭正在运行的 CC Desktop Switch。"
+                ),
             }
         except updater.UpdateCheckError as exc:
             return JSONResponse(

@@ -40,6 +40,16 @@ The script sets `PYINSTALLER_CONFIG_DIR` to `.tmp/pyinstaller/` by default so Py
 
 The macOS icon preparation step removes the baked checkerboard background from the shared PNG before creating the `.icns` file.
 
+The version defaults to `APP_VERSION` in `main.py`. Set `CCDS_VERSION` only when intentionally overriding the packaged version.
+
+## Update Assets
+
+The in-app updater uses platform keys such as `macos-arm64` and `macos-x64` from `latest.json`. For macOS install actions, the app prefers a `.pkg` asset and falls back to a `.dmg` asset. The Windows release script stages matching macOS assets from `dist/mac/` into the release directory and includes them in `latest.json`.
+
+## Runtime Behavior
+
+The first macOS runtime keeps the app as a normal Dock application. Closing the window hides it so the local proxy can continue serving Claude Desktop through `127.0.0.1:<proxyPort>`, and clicking the Dock icon restores the main window. Quit with `Cmd+Q`, the Dock Quit command, or the app's Window menu when the proxy should stop.
+
 ## Optional Signing
 
 For local unsigned testing, no environment variables are required.
@@ -92,4 +102,4 @@ Then verify:
 - PyInstaller is not a cross-compiler. Build macOS assets on macOS.
 - Prefer the onedir `.app` bundle for macOS distribution. Onefile app bundles add startup overhead and are a poor fit for signed distribution.
 - Public distribution should use Developer ID signing and Apple notarization.
-- The first macOS package intentionally disables the `pystray` tray icon. Its AppKit backend calls `NSApplication.run`, which must stay on the main thread while pywebview owns the macOS UI loop.
+- The first macOS package intentionally disables the `pystray` tray icon. Its AppKit backend calls `NSApplication.run`, which must stay on the main thread while pywebview owns the macOS UI loop. Window close is handled by the Dock app lifecycle instead of a tray icon.

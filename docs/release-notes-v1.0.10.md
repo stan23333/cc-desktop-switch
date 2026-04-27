@@ -15,8 +15,9 @@
 
 ## 平台说明
 
-- 本次只发布 Windows 安装版、Windows 便携版和 `latest.json` 更新元数据。
-- macOS 版本由另一位维护者单独构建和发布，本次不上传 Mac 资产。
+- 本次发布 Windows 安装版、Windows 便携版、macOS DMG、macOS PKG 和 `latest.json` 更新元数据。
+- macOS 的应用内更新会按平台读取 `macos-<arch>` 资产，优先打开 PKG 安装器，DMG 作为拖拽安装兜底。
+- macOS 版点击关闭窗口会隐藏应用并保持本机转发服务运行；再次点击 Dock 图标会恢复主窗口，使用 `Cmd+Q` 或退出菜单才会停止应用。
 
 ## 隐私说明
 
@@ -36,3 +37,4 @@
 
 - 普通用户优先下载 `CC-Desktop-Switch-v1.0.10-Windows-Setup.exe`。
 - 不想安装可以下载 `CC-Desktop-Switch-v1.0.10-Windows-Portable.zip`。
+- macOS 用户可以下载 `CC-Desktop-Switch-v1.0.10-macOS-arm64.dmg` 或 `CC-Desktop-Switch-v1.0.10-macOS-arm64.pkg`。

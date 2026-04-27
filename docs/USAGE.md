@@ -24,7 +24,16 @@ CC-Desktop-Switch-v1.0.10-Windows-Setup.exe
 CC-Desktop-Switch-v1.0.10-Windows-Portable.zip
 ```
 
-macOS 版本由另一位维护者单独构建和发布。本工具当前发布流程只上传 Windows 安装版、便携版和更新元数据。
+macOS 用户可以下载对应的 DMG 或 PKG：
+
+```text
+CC-Desktop-Switch-v1.0.10-macOS-arm64.dmg
+CC-Desktop-Switch-v1.0.10-macOS-arm64.pkg
+```
+
+DMG 打开后把应用拖到“应用程序”；如果该位置已有旧版，Finder 会提示是否替换。PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。
+
+macOS 版点击窗口左上角关闭按钮时会隐藏窗口并继续运行本机转发服务；再次点击 Dock 图标会恢复主窗口。需要停止转发并退出应用时，请使用 `Cmd+Q`、Dock 菜单的退出，或应用菜单里的退出项。
 
 启动后会打开一个桌面窗口。浏览器地址只是备用入口：
 

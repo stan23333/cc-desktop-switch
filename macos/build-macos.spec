@@ -2,6 +2,7 @@
 """PyInstaller spec for macOS app bundle builds."""
 
 import os
+import re
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
@@ -9,7 +10,19 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 ROOT = Path(SPECPATH).parent
 FRONTEND = ROOT / "frontend"
 MACOS_DIR = ROOT / "macos"
-APP_VERSION = os.environ.get("CCDS_VERSION", "1.0.9")
+
+def detect_app_version():
+    env_version = os.environ.get("CCDS_VERSION")
+    if env_version:
+        return env_version
+    text = (ROOT / "main.py").read_text(encoding="utf-8")
+    match = re.search(r'^APP_VERSION\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
+    if not match:
+        raise RuntimeError("APP_VERSION not found in main.py")
+    return match.group(1)
+
+
+APP_VERSION = detect_app_version()
 APP_NAME = "CC Desktop Switch"
 EXECUTABLE_NAME = "CC-Desktop-Switch"
 BUNDLE_IDENTIFIER = os.environ.get("CCDS_MACOS_BUNDLE_ID", "io.github.lonr6.ccdesktopswitch")
@@ -59,7 +72,11 @@ a = Analysis(
     hiddenimports=[
         "backend",
         "backend.main",
+        "backend.api_adapters",
+        "backend.ccswitch_import",
         "backend.config",
+        "backend.model_alias",
+        "backend.provider_tools",
         "backend.registry",
         "backend.proxy",
         "backend.update",

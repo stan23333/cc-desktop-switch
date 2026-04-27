@@ -115,6 +115,37 @@ function Add-Asset {
     }) | Out-Null
 }
 
+function Add-MacPlatformAssets {
+    param(
+        [System.Collections.IDictionary]$Platforms,
+        [string]$MacDir,
+        [string]$ReleaseDir,
+        [string]$Arch,
+        [string]$Version,
+        [string]$PrivateKeyPath
+    )
+
+    if (-not (Test-Path -LiteralPath $MacDir)) {
+        return
+    }
+
+    $macAssets = [System.Collections.Generic.List[object]]::new()
+    foreach ($extension in @("pkg", "dmg")) {
+        $assetPath = Join-Path $MacDir "CC-Desktop-Switch-v$Version-macOS-$Arch.$extension"
+        if (Test-Path -LiteralPath $assetPath) {
+            $releaseAssetPath = Join-Path $ReleaseDir (Split-Path -Leaf $assetPath)
+            Copy-Item -LiteralPath $assetPath -Destination $releaseAssetPath -Force
+            Add-Asset -Assets $macAssets -Path $releaseAssetPath -PrivateKeyPath $PrivateKeyPath
+        }
+    }
+
+    if ($macAssets.Count -gt 0) {
+        $Platforms["macos-$Arch"] = [ordered]@{
+            assets = $macAssets
+        }
+    }
+}
+
 function Get-AssetUrl {
     param([string]$FileName)
     if ($Repository) {
@@ -174,6 +205,7 @@ Set-Location $root
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 foreach ($pattern in @(
     "CC-Desktop-Switch-v*-Windows-*",
+    "CC-Desktop-Switch-v*-macOS-*",
     "CC-Desktop-Switch-release-public.pem",
     "latest.json",
     "latest.json.sha256",
@@ -245,6 +277,15 @@ if ($releaseSetup -and (Test-Path -LiteralPath $releaseSetup)) {
     Add-Asset -Assets $assets -Path $releaseSetup -PrivateKeyPath $privateKey
 }
 
+$platforms = [ordered]@{
+    "windows-x64" = [ordered]@{
+        assets = $assets
+    }
+}
+$macDistDir = Join-Path $distDir "mac"
+Add-MacPlatformAssets -Platforms $platforms -MacDir $macDistDir -ReleaseDir $releaseDir -Arch "arm64" -Version $Version -PrivateKeyPath $privateKey
+Add-MacPlatformAssets -Platforms $platforms -MacDir $macDistDir -ReleaseDir $releaseDir -Arch "x64" -Version $Version -PrivateKeyPath $privateKey
+
 $latest = [ordered]@{
     name = "CC Desktop Switch"
     version = $Version
@@ -252,11 +293,7 @@ $latest = [ordered]@{
     notes = "Windows release for CC Desktop Switch v$Version."
     update_protocol = 1
     minimum_supported_version = "1.0.0"
-    platforms = [ordered]@{
-        "windows-x64" = [ordered]@{
-            assets = $assets
-        }
-    }
+    platforms = $platforms
     signature = [ordered]@{
         algorithm = "RSA-CSP-BLOB-SHA256"
         public_key = "CC-Desktop-Switch-release-public.pem"

@@ -694,6 +694,18 @@ class ProviderConfigTests(unittest.TestCase):
 
         self.assertEqual(asset["name"], "CC-Desktop-Switch-v1.0.5-Windows-Setup.exe")
 
+    def test_update_platform_helpers_support_macos_assets(self):
+        self.assertEqual(updater.current_platform("darwin", "arm64"), "macos-arm64")
+        self.assertEqual(updater.current_platform("win32", "AMD64"), "windows-x64")
+
+        asset = updater.pick_platform_installer([
+            {"name": "CC-Desktop-Switch-v1.0.10-macOS-arm64.dmg"},
+            {"name": "CC-Desktop-Switch-v1.0.10-macOS-arm64.pkg"},
+        ], "macos-arm64")
+
+        self.assertEqual(asset["name"], "CC-Desktop-Switch-v1.0.10-macOS-arm64.pkg")
+        self.assertEqual(updater.install_command("/tmp/app.pkg", "macos-arm64"), ["open", "/tmp/app.pkg"])
+
     def test_reorder_providers_persists_order_and_sort_index(self):
         first = cfg.add_provider({
             "name": "DeepSeek",
@@ -1332,11 +1344,54 @@ class AdminApiTests(unittest.TestCase):
                 "updateProtocol": 1,
             }
 
-        with patch("backend.main.updater.check_update", fake_check_update):
-            response = self.client.get("/api/update/check")
+        with patch("backend.main.updater.current_platform", return_value="windows-x64"):
+            with patch("backend.main.updater.check_update", fake_check_update):
+                response = self.client.get("/api/update/check")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(observed["url"], cfg.DEFAULT_UPDATE_URL)
+        self.assertEqual(observed["platform"], "windows-x64")
+
+    def test_update_check_uses_current_platform(self):
+        observed = {}
+
+        async def fake_check_update(url, current_version, platform="windows-x64"):
+            observed["platform"] = platform
+            return {
+                "success": True,
+                "updateAvailable": False,
+                "currentVersion": current_version,
+                "latestVersion": current_version,
+                "platform": platform,
+                "assets": [],
+            }
+
+        with patch("backend.main.updater.current_platform", return_value="macos-arm64"):
+            with patch("backend.main.updater.check_update", fake_check_update):
+                response = self.client.get("/api/update/check")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(observed["platform"], "macos-arm64")
+
+    def test_update_check_accepts_explicit_platform(self):
+        observed = {}
+
+        async def fake_check_update(url, current_version, platform="windows-x64"):
+            observed["platform"] = platform
+            return {
+                "success": True,
+                "updateAvailable": False,
+                "currentVersion": current_version,
+                "latestVersion": current_version,
+                "platform": platform,
+                "assets": [],
+            }
+
+        with patch("backend.main.updater.check_update", fake_check_update):
+            response = self.client.get("/api/update/check?platform=macos-arm64")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(observed["platform"], "macos-arm64")
 
     def test_set_default_provider_syncs_desktop_models_when_managed(self):
         first = cfg.add_provider({
@@ -1438,13 +1493,14 @@ class AdminApiTests(unittest.TestCase):
                 "message": "当前已是最新版本",
             }
 
-        with patch("backend.main.updater.download_update", fake_download_update):
-            with patch("backend.main.subprocess.Popen") as popen:
-                response = self.client.post(
-                    "/api/update/install",
-                    headers={"x-ccds-request": "1"},
-                    json={},
-                )
+        with patch("backend.main.updater.current_platform", return_value="windows-x64"):
+            with patch("backend.main.updater.download_update", fake_download_update):
+                with patch("backend.main.subprocess.Popen") as popen:
+                    response = self.client.post(
+                        "/api/update/install",
+                        headers={"x-ccds-request": "1"},
+                        json={},
+                    )
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["updateAvailable"])
@@ -1463,18 +1519,49 @@ class AdminApiTests(unittest.TestCase):
                 "installerPath": r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe",
             }
 
-        with patch("backend.main.updater.download_update", fake_download_update):
-            with patch("backend.main.subprocess.Popen") as popen:
-                response = self.client.post(
-                    "/api/update/install",
-                    headers={"x-ccds-request": "1"},
-                    json={},
-                )
+        with patch("backend.main.updater.current_platform", return_value="windows-x64"):
+            with patch("backend.main.updater.download_update", fake_download_update):
+                with patch("backend.main.subprocess.Popen") as popen:
+                    response = self.client.post(
+                        "/api/update/install",
+                        headers={"x-ccds-request": "1"},
+                        json={},
+                    )
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["installerStarted"])
         popen.assert_called_once_with(
             [r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe"],
+            close_fds=True,
+        )
+
+    def test_update_install_opens_downloaded_macos_package(self):
+        async def fake_download_update(url, current_version, platform="windows-x64", target_dir=None):
+            return {
+                "success": True,
+                "updateAvailable": True,
+                "currentVersion": current_version,
+                "latestVersion": "1.0.11",
+                "platform": platform,
+                "assets": [],
+                "downloaded": True,
+                "installerPath": "/tmp/CC-Desktop-Switch-v1.0.11-macOS-arm64.pkg",
+            }
+
+        with patch("backend.main.updater.current_platform", return_value="macos-arm64"):
+            with patch("backend.main.updater.download_update", fake_download_update):
+                with patch("backend.main.subprocess.Popen") as popen:
+                    response = self.client.post(
+                        "/api/update/install",
+                        headers={"x-ccds-request": "1"},
+                        json={},
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["installerStarted"])
+        self.assertEqual(response.json()["platform"], "macos-arm64")
+        popen.assert_called_once_with(
+            ["open", "/tmp/CC-Desktop-Switch-v1.0.11-macOS-arm64.pkg"],
             close_fds=True,
         )
 
@@ -2015,7 +2102,29 @@ class DesktopTrayControllerTests(unittest.TestCase):
 
         self.assertIs(result, False)
         self.assertEqual(window.hidden, 1)
+        self.assertTrue(tray.window_hidden)
         self.assertEqual(len(tray.icon.notifications), 1)
+
+    def test_macos_close_hides_window_without_tray_icon(self):
+        window = FakeTrayWindow()
+        tray = DesktopTrayController(window, "missing-icon.png")
+
+        with patch("main._macos_should_quit_from_close_event", return_value=False):
+            result = tray.handle_window_closing()
+
+        self.assertIs(result, False)
+        self.assertEqual(window.hidden, 1)
+        self.assertTrue(tray.window_hidden)
+
+    def test_macos_quit_event_allows_window_close(self):
+        window = FakeTrayWindow()
+        tray = DesktopTrayController(window, "missing-icon.png")
+
+        with patch("main._macos_should_quit_from_close_event", return_value=True):
+            result = tray.handle_window_closing()
+
+        self.assertIsNone(result)
+        self.assertEqual(window.hidden, 0)
 
     def test_quit_allows_window_close(self):
         window = FakeTrayWindow()
@@ -2036,6 +2145,7 @@ class DesktopTrayControllerTests(unittest.TestCase):
 
         self.assertEqual(window.shown, 1)
         self.assertEqual(window.restored, 1)
+        self.assertFalse(tray.window_hidden)
 
     def test_switch_provider_updates_active_provider_and_refreshes_menu(self):
         first = cfg.add_provider({

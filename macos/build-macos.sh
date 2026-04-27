@@ -5,7 +5,20 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-VERSION="${CCDS_VERSION:-1.0.9}"
+detect_version() {
+  "$PYTHON_BIN" - "$ROOT/main.py" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r'^APP_VERSION\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
+if not match:
+    raise SystemExit("APP_VERSION not found in main.py")
+print(match.group(1))
+PY
+}
+VERSION="${CCDS_VERSION:-$(detect_version)}"
 ARCH="$(uname -m)"
 if [[ "$ARCH" == "x86_64" ]]; then
   RELEASE_ARCH="x64"

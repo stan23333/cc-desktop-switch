@@ -23,6 +23,7 @@ APP_NAME = "CC Desktop Switch"
 APP_VERSION = "1.0.10"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
+_macos_app_delegate = None
 MB_OK = 0x00000000
 MB_ICONINFORMATION = 0x00000040
 MB_SETFOREGROUND = 0x00010000
@@ -137,6 +138,83 @@ def open_browser_when_ready(url: str):
         webbrowser.open(url)
 
 
+def _macos_should_quit_from_close_event() -> bool:
+    """Best-effort distinction between closing the window and quitting the app."""
+    if sys.platform != "darwin":
+        return False
+
+    try:
+        import AppKit
+    except Exception:
+        return False
+
+    try:
+        event = AppKit.NSApp.currentEvent()
+    except Exception:
+        return False
+    if event is None:
+        return True
+
+    try:
+        event_window = event.window()
+    except Exception:
+        event_window = None
+    if event_window is None:
+        return True
+
+    try:
+        if event.type() == AppKit.NSKeyDown:
+            chars = str(event.charactersIgnoringModifiers() or "").lower()
+            return chars == "q"
+    except Exception:
+        return False
+
+    return False
+
+
+def _install_macos_reopen_handler(window, controller):
+    """Install a Cocoa app delegate that restores the hidden Dock app window."""
+    if sys.platform != "darwin":
+        return
+
+    try:
+        window.events.shown.wait(10)
+        import AppKit
+        import Foundation
+        from PyObjCTools import AppHelper
+        from webview.platforms.cocoa import BrowserView
+    except Exception as exc:
+        safe_print(f"macOS reopen handler unavailable: {exc}")
+        return
+
+    class CCDesktopSwitchAppDelegate(AppKit.NSObject):
+        def applicationShouldTerminate_(self, app):
+            should_close = True
+            try:
+                for instance in list(BrowserView.instances.values()):
+                    should_close = should_close and BrowserView.should_close(instance.pywebview_window)
+            except Exception:
+                return Foundation.YES
+            return Foundation.YES if should_close else Foundation.NO
+
+        def applicationSupportsSecureRestorableState_(self, app):
+            return Foundation.YES
+
+        def applicationShouldHandleReopen_hasVisibleWindows_(self, app, has_visible_windows):
+            if controller.window_hidden or not bool(has_visible_windows):
+                controller.show_window()
+            return Foundation.YES
+
+    delegate = CCDesktopSwitchAppDelegate.alloc().init().retain()
+
+    def set_delegate():
+        global _macos_app_delegate
+        _macos_app_delegate = delegate
+        AppKit.NSApplication.sharedApplication().setDelegate_(delegate)
+
+    AppHelper.callAfter(set_delegate)
+
+
 class DesktopTrayController:
     """系统托盘控制器：关闭窗口时隐藏，托盘菜单里显式退出。"""
 
@@ -148,6 +226,7 @@ class DesktopTrayController:
         self.pystray = None
         self.exit_requested = False
         self._notified = False
+        self.window_hidden = False
 
     def start(self) -> bool:
         """启动系统托盘图标。依赖缺失时返回 False，不影响主窗口打开。"""
@@ -277,7 +356,7 @@ class DesktopTrayController:
 
     def handle_window_closing(self):
         """pywebview closing 事件：返回 False 表示取消关闭。"""
-        if self.exit_requested:
+        if self.exit_requested or _macos_should_quit_from_close_event():
             return None
 
         self.hide_window()
@@ -286,11 +365,13 @@ class DesktopTrayController:
 
     def hide_window(self):
         self.window.hide()
+        self.window_hidden = True
 
     def show_window(self, icon=None, item=None):
         try:
             self.window.show()
             self.window.restore()
+            self.window_hidden = False
         except Exception as exc:
             safe_print(f"show window failed: {exc}")
 
@@ -343,10 +424,33 @@ def open_desktop_window(url: str) -> bool:
             window,
             Path(__file__).resolve().parent / "frontend" / "assets" / "app-icon.png",
         )
-        if tray.start():
+        tray_started = tray.start()
+        if tray_started or sys.platform == "darwin":
             window.events.closing += tray.handle_window_closing
+        if tray_started:
             window.events.closed += tray.stop
-        webview.start(debug=False)
+
+        menu = []
+        if sys.platform == "darwin":
+            from webview.menu import Menu, MenuAction, MenuSeparator
+
+            menu = [
+                Menu("Window", [
+                    MenuAction("Show CC Desktop Switch", tray.show_window),
+                    MenuSeparator(),
+                    MenuAction("Quit CC Desktop Switch", tray.quit_app),
+                ]),
+            ]
+
+        if sys.platform == "darwin":
+            webview.start(
+                func=_install_macos_reopen_handler,
+                args=(window, tray),
+                debug=False,
+                menu=menu,
+            )
+        else:
+            webview.start(debug=False, menu=menu)
         return True
     except Exception as exc:
         safe_print(f"desktop window failed, fallback to browser: {exc}")

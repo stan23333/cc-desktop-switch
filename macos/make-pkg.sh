@@ -1,7 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${1:-1.0.9}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+detect_version() {
+  "$PYTHON_BIN" - "$ROOT/main.py" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r'^APP_VERSION\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
+if not match:
+    raise SystemExit("APP_VERSION not found in main.py")
+print(match.group(1))
+PY
+}
+
+VERSION="${1:-${CCDS_VERSION:-$(detect_version)}}"
 APP_PATH="${2:-dist/mac/CC Desktop Switch.app}"
 OUTPUT_PKG="${3:-dist/mac/CC-Desktop-Switch-v${VERSION}-macOS.pkg}"
 
@@ -15,7 +31,6 @@ if ! command -v pkgbuild >/dev/null 2>&1; then
   exit 1
 fi
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG_ROOT="$ROOT/.tmp/pkg-root"
 SCRIPTS_DIR="$ROOT/macos/pkg-scripts"
 APP_NAME="$(basename "$APP_PATH")"

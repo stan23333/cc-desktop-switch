@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import platform as platform_module
 import re
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,26 @@ import httpx
 
 class UpdateCheckError(Exception):
     """更新检查失败。"""
+
+
+def current_platform(sys_platform: str | None = None, machine: str | None = None) -> str:
+    """返回 latest.json 中使用的平台键。"""
+    raw_platform = sys_platform or sys.platform
+    raw_machine = (machine or platform_module.machine() or "").lower()
+    if raw_machine in {"amd64", "x86_64"}:
+        arch = "x64"
+    elif raw_machine in {"arm64", "aarch64"}:
+        arch = "arm64"
+    else:
+        arch = raw_machine or "unknown"
+
+    if raw_platform.startswith("win"):
+        return f"windows-{arch}"
+    if raw_platform == "darwin":
+        return f"macos-{arch}"
+    if raw_platform.startswith("linux"):
+        return f"linux-{arch}"
+    return f"{raw_platform}-{arch}"
 
 
 def _version_parts(version: str) -> list[int]:
@@ -73,6 +95,46 @@ def pick_windows_installer(assets: list[dict[str, Any]]) -> dict[str, Any]:
     raise UpdateCheckError("当前版本没有 Windows 安装包资产")
 
 
+def pick_macos_installer(assets: list[dict[str, Any]]) -> dict[str, Any]:
+    """优先选择 macOS PKG 安装器，DMG 作为拖拽安装兜底。"""
+    candidates = []
+    for asset in assets:
+        name = str(asset.get("name") or "").lower()
+        if name.endswith(".pkg"):
+            return asset
+        if name.endswith(".dmg"):
+            candidates.append(asset)
+    if candidates:
+        return candidates[0]
+    raise UpdateCheckError("当前版本没有 macOS 安装资产")
+
+
+def pick_platform_installer(assets: list[dict[str, Any]], platform: str) -> dict[str, Any]:
+    """按平台选择可直接启动的安装资产。"""
+    if platform.startswith("windows-"):
+        return pick_windows_installer(assets)
+    if platform.startswith("macos-"):
+        return pick_macos_installer(assets)
+    raise UpdateCheckError(f"当前平台暂不支持应用内安装: {platform}")
+
+
+def _allowed_install_extensions(platform: str) -> tuple[str, ...]:
+    if platform.startswith("windows-"):
+        return (".exe",)
+    if platform.startswith("macos-"):
+        return (".pkg", ".dmg")
+    return ()
+
+
+def install_command(path: str, platform: str) -> list[str]:
+    """返回启动已下载安装资产的命令。"""
+    if platform.startswith("windows-"):
+        return [path]
+    if platform.startswith("macos-"):
+        return ["open", path]
+    raise UpdateCheckError(f"当前平台暂不支持应用内安装: {platform}")
+
+
 async def fetch_latest_json(url: str) -> dict[str, Any]:
     safe_url = _validate_update_url(url)
     try:
@@ -125,12 +187,20 @@ async def check_update(
     }
 
 
-async def download_asset(asset: dict[str, Any], target_dir: str | Path | None = None) -> dict[str, Any]:
+async def download_asset(
+    asset: dict[str, Any],
+    target_dir: str | Path | None = None,
+    platform: str = "windows-x64",
+) -> dict[str, Any]:
     """下载资产并按 latest.json 中的 sha256 校验。"""
     url = _validate_update_url(str(asset.get("url") or ""))
     filename = _safe_asset_name(str(asset.get("name") or Path(urlparse(url).path).name))
-    if not filename.lower().endswith(".exe"):
-        raise UpdateCheckError("只能在应用内下载安装程序 exe")
+    allowed_extensions = _allowed_install_extensions(platform)
+    if not allowed_extensions:
+        raise UpdateCheckError(f"当前平台暂不支持应用内安装: {platform}")
+    if not filename.lower().endswith(allowed_extensions):
+        allowed = " / ".join(allowed_extensions)
+        raise UpdateCheckError(f"当前平台只能下载安装资产: {allowed}")
 
     updates_dir = Path(target_dir or Path(tempfile.gettempdir()) / "CC-Desktop-Switch" / "updates")
     updates_dir.mkdir(parents=True, exist_ok=True)
@@ -173,7 +243,7 @@ async def download_update(
     platform: str = "windows-x64",
     target_dir: str | Path | None = None,
 ) -> dict[str, Any]:
-    """检查更新，确认落后时下载 Windows 安装包。"""
+    """检查更新，确认落后时下载当前平台安装包。"""
     result = await check_update(url, current_version, platform)
     if not result.get("updateAvailable"):
         return {
@@ -182,8 +252,8 @@ async def download_update(
             "message": "当前已是最新版本",
         }
 
-    installer_asset = pick_windows_installer(result.get("assets") or [])
-    downloaded = await download_asset(installer_asset, target_dir=target_dir)
+    installer_asset = pick_platform_installer(result.get("assets") or [], platform)
+    downloaded = await download_asset(installer_asset, target_dir=target_dir, platform=platform)
     return {
         **result,
         "downloaded": True,
