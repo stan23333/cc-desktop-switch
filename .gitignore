@@ -29,6 +29,7 @@ macos/assets/app-icon-prepared.png
 macos-packaging-plan.md
 
 # Local-only project materials and generated review screenshots.
+agent/
 prompt-codex.md
 image/
 ccds-*.png
