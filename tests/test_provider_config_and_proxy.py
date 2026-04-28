@@ -782,6 +782,10 @@ class ProviderConfigTests(unittest.TestCase):
 
         self.assertEqual(asset["name"], "CC-Desktop-Switch-v1.0.10-macOS-arm64.pkg")
         self.assertEqual(updater.install_command("/tmp/app.pkg", "macos-arm64"), ["open", "/tmp/app.pkg"])
+        queued = updater.install_after_quit_command("/tmp/app.pkg", "macos-arm64", 4321)
+        self.assertEqual(queued[0], "/bin/sh")
+        self.assertIn('kill -0 "$pid"', queued[2])
+        self.assertEqual(queued[-2:], ["4321", "/tmp/app.pkg"])
 
     def test_reorder_providers_persists_order_and_sort_index(self):
         first = cfg.add_provider({
@@ -1641,7 +1645,46 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["installerStarted"])
         self.assertEqual(response.json()["platform"], "macos-arm64")
+        self.assertFalse(response.json()["quitRequested"])
         popen.assert_called_once_with(["open", "/tmp/CC-Desktop-Switch-v1.0.11-macOS-arm64.pkg"])
+
+    def test_update_install_waits_for_macos_quit_before_opening_package(self):
+        async def fake_download_update(url, current_version, platform="windows-x64", target_dir=None):
+            return {
+                "success": True,
+                "updateAvailable": True,
+                "currentVersion": current_version,
+                "latestVersion": "1.0.11",
+                "platform": platform,
+                "assets": [],
+                "downloaded": True,
+                "installerPath": "/tmp/CC-Desktop-Switch-v1.0.11-macOS-arm64.pkg",
+            }
+
+        with patch("backend.main.updater.current_platform", return_value="macos-arm64"):
+            with patch("backend.main.updater.download_update", fake_download_update):
+                with patch("backend.main._get_update_quit_handler", return_value=lambda: None):
+                    with patch("backend.main._schedule_update_quit_for_install", return_value=True):
+                        with patch("backend.main.os.getpid", return_value=4321):
+                            with patch("backend.main._popen_hidden") as popen:
+                                response = self.client.post(
+                                    "/api/update/install",
+                                    headers={"x-ccds-request": "1"},
+                                    json={},
+                                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["installerStarted"])
+        self.assertTrue(response.json()["quitRequested"])
+        self.assertEqual(response.json()["platform"], "macos-arm64")
+        popen.assert_called_once_with(
+            updater.install_after_quit_command(
+                "/tmp/CC-Desktop-Switch-v1.0.11-macOS-arm64.pkg",
+                "macos-arm64",
+                4321,
+            ),
+            detached=True,
+        )
 
 
 class ProxyConversionTests(unittest.TestCase):
@@ -2414,6 +2457,11 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn("toast.defaultUpdatedDesktop", app_js + i18n)
         self.assertIn("restartReminder.dontShow", i18n)
         self.assertIn("confirm.installUpdate", app_js + i18n)
+        self.assertIn("setUpdateInstallPhase", app_js)
+        self.assertIn("settings.downloadingUpdate", app_js + i18n)
+        self.assertIn("settings.installingUpdate", app_js + i18n)
+        self.assertIn("toast.updateDownloading", app_js + i18n)
+        self.assertIn(".update-badge:disabled", css)
         self.assertIn("不会删除本工具里保存的提供商和 API Key", i18n)
         self.assertIn('class="panel model-menu-mode-panel" hidden aria-hidden="true"', html)
         self.assertIn('class="settings-row" hidden aria-hidden="true"', html)

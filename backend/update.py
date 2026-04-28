@@ -135,6 +135,24 @@ def install_command(path: str, platform: str) -> list[str]:
     raise UpdateCheckError(f"当前平台暂不支持应用内安装: {platform}")
 
 
+def install_after_quit_command(path: str, platform: str, wait_for_pid: int) -> list[str]:
+    """返回等待当前进程退出后再启动安装器的命令。"""
+    if wait_for_pid <= 0:
+        raise UpdateCheckError("等待退出的进程 ID 无效")
+    if platform.startswith("macos-"):
+        return [
+            "/bin/sh",
+            "-c",
+            'pid="$1"; installer="$2"; '
+            'while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done; '
+            'exec open "$installer"',
+            "ccds-update-installer",
+            str(wait_for_pid),
+            path,
+        ]
+    return install_command(path, platform)
+
+
 async def fetch_latest_json(url: str) -> dict[str, Any]:
     safe_url = _validate_update_url(url)
     try:

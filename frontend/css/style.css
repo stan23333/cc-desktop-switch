@@ -1621,6 +1621,13 @@ body {
   background: #ffedd5;
 }
 
+.update-badge:disabled {
+  opacity: .7;
+  cursor: not-allowed;
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
 .update-badge[hidden] {
   display: none;
 }
@@ -1633,6 +1640,10 @@ body {
 
 [data-bs-theme="dark"] .update-badge:hover {
   background: rgba(251, 146, 60, .2);
+}
+
+[data-bs-theme="dark"] .update-badge:disabled {
+  background: rgba(251, 146, 60, .13);
 }
 
 .provider-card-list,

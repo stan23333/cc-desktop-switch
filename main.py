@@ -14,7 +14,13 @@ from urllib.request import urlopen
 
 import uvicorn
 
-from backend.main import create_admin_app, desktop_config_target_for_provider, _start_proxy_server, _stop_proxy_server
+from backend.main import (
+    create_admin_app,
+    desktop_config_target_for_provider,
+    register_update_quit_handler,
+    _start_proxy_server,
+    _stop_proxy_server,
+)
 from backend import config as cfg
 from backend import registry
 
@@ -427,6 +433,17 @@ def open_desktop_window(url: str) -> bool:
             window,
             Path(__file__).resolve().parent / "frontend" / "assets" / "app-icon.png",
         )
+
+        def request_quit_for_update():
+            if sys.platform == "darwin":
+                try:
+                    from PyObjCTools import AppHelper
+                    AppHelper.callAfter(tray.quit_app)
+                    return
+                except Exception:
+                    pass
+            tray.quit_app()
+
         tray_started = tray.start()
         if tray_started or sys.platform == "darwin":
             window.events.closing += tray.handle_window_closing
@@ -445,15 +462,19 @@ def open_desktop_window(url: str) -> bool:
                 ]),
             ]
 
-        if sys.platform == "darwin":
-            webview.start(
-                func=_install_macos_reopen_handler,
-                args=(window, tray),
-                debug=False,
-                menu=menu,
-            )
-        else:
-            webview.start(debug=False, menu=menu)
+        register_update_quit_handler(request_quit_for_update)
+        try:
+            if sys.platform == "darwin":
+                webview.start(
+                    func=_install_macos_reopen_handler,
+                    args=(window, tray),
+                    debug=False,
+                    menu=menu,
+                )
+            else:
+                webview.start(debug=False, menu=menu)
+        finally:
+            register_update_quit_handler(None)
         return True
     except Exception as exc:
         safe_print(f"desktop window failed, fallback to browser: {exc}")

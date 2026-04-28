@@ -17,6 +17,7 @@
   let restartReminderModal = null;
   let toast = null;
   let updateCheckCache = null;
+  let updateInstallPhase = "idle";
   let ccSwitchCandidates = [];
 
   function $(selector, root = document) {
@@ -151,20 +152,52 @@
     const badge = $("#dashboardUpdateBadge");
     const available = !!result?.updateAvailable;
     const installButton = $("#settingsInstallUpdate");
+    const busy = updateInstallPhase !== "idle";
     if (badge) {
-      badge.hidden = !available;
-      badge.title = available ? t("settings.installUpdate") : "";
+      badge.hidden = !(available || busy);
+      badge.disabled = busy;
+      badge.title = available && !busy ? t("settings.installUpdate") : "";
       badge.setAttribute("aria-label", available ? t("settings.installUpdate") : t("dashboard.updateAvailable"));
     }
     if (installButton) {
-      installButton.hidden = !available;
+      installButton.hidden = !(available || busy);
+      installButton.disabled = busy;
+    }
+    const badgeIcon = badge ? $("i", badge) : null;
+    if (badgeIcon) {
+      badgeIcon.className = busy ? "bi bi-arrow-repeat" : "bi bi-cloud-arrow-down";
+    }
+    const installIcon = installButton ? $("i", installButton) : null;
+    if (installIcon) {
+      installIcon.className = busy ? "bi bi-arrow-repeat" : "bi bi-download";
     }
     const text = badge ? $("span", badge) : null;
-    if (text && available) {
-      text.textContent = result.latestVersion
-        ? `${t("dashboard.updateAvailable")} ${result.latestVersion}`
-        : t("dashboard.updateAvailable");
+    if (text) {
+      if (updateInstallPhase === "downloading") {
+        text.textContent = t("settings.downloadingUpdate");
+      } else if (updateInstallPhase === "installing") {
+        text.textContent = t("settings.installingUpdate");
+      } else if (available) {
+        text.textContent = result.latestVersion
+          ? `${t("dashboard.updateAvailable")} ${result.latestVersion}`
+          : t("dashboard.updateAvailable");
+      }
     }
+    const installText = installButton ? $("span", installButton) : null;
+    if (installText) {
+      if (updateInstallPhase === "downloading") {
+        installText.textContent = t("settings.downloadingUpdate");
+      } else if (updateInstallPhase === "installing") {
+        installText.textContent = t("settings.installingUpdate");
+      } else {
+        installText.textContent = t("settings.installUpdate");
+      }
+    }
+  }
+
+  function setUpdateInstallPhase(phase = "idle") {
+    updateInstallPhase = phase;
+    renderUpdateBadge(updateCheckCache);
   }
 
   async function refreshUpdateBadge(force = false) {
@@ -1332,20 +1365,30 @@
           return;
         }
         if (!window.confirm(t("confirm.installUpdate"))) return;
-        actionEl.disabled = true;
+        let keepBusyState = false;
+        const status = $("#updateStatus");
+        setUpdateInstallPhase("downloading");
+        if (status) {
+          status.textContent = t("toast.updateDownloading");
+          status.classList.add("available");
+        }
         try {
           const result = await CCApi.installUpdate($("#settingsUpdateUrl")?.value.trim() || "");
           updateCheckCache = result;
+          keepBusyState = !!result.quitRequested;
+          setUpdateInstallPhase(keepBusyState ? "installing" : "idle");
           renderUpdateBadge(result);
           const message = result.message || t("toast.updateInstallerStarted");
-          const status = $("#updateStatus");
           if (status) {
             status.textContent = message;
             status.classList.toggle("available", !!result.updateAvailable);
           }
           showToast(message);
+        } catch (error) {
+          setUpdateInstallPhase("idle");
+          throw error;
         } finally {
-          actionEl.disabled = false;
+          if (!keepBusyState) setUpdateInstallPhase("idle");
         }
       }
 

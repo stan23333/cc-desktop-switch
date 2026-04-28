@@ -1,6 +1,7 @@
 """FastAPI 应用 - 管理 API + 静态文件服务"""
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -10,7 +11,7 @@ from urllib.parse import urlparse
 import httpx
 import uvicorn
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -33,17 +34,65 @@ from backend.proxy import (
 # ── 路径设置 ──
 # 前端目录: 项目根目录下的 frontend/
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+_update_quit_handler: Optional[Callable[[], None]] = None
 
 
-def _popen_hidden(command: list[str]):
+def _popen_hidden(command: list[str], *, detached: bool = False):
     """启动外部程序时避免 Windows 弹出黑色终端窗口。"""
     kwargs = {"close_fds": True}
+    if detached:
+        kwargs["stdin"] = subprocess.DEVNULL
+        kwargs["stdout"] = subprocess.DEVNULL
+        kwargs["stderr"] = subprocess.DEVNULL
     if sys.platform == "win32":
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         kwargs["startupinfo"] = startupinfo
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    elif detached:
+        kwargs["start_new_session"] = True
     return subprocess.Popen(command, **kwargs)
+
+
+def register_update_quit_handler(handler: Optional[Callable[[], None]]):
+    """注册更新安装前用于优雅退出主应用的回调。"""
+    global _update_quit_handler
+    _update_quit_handler = handler
+
+
+def _get_update_quit_handler() -> Optional[Callable[[], None]]:
+    handler = _update_quit_handler
+    return handler if callable(handler) else None
+
+
+def _schedule_update_quit_for_install(handler: Callable[[], None], delay: float = 0.8) -> bool:
+    """延迟一点退出主应用，确保前端先收到安装响应。"""
+    if not callable(handler):
+        return False
+
+    def _invoke_handler():
+        try:
+            handler()
+        except Exception:
+            return
+
+    timer = threading.Timer(delay, _invoke_handler)
+    timer.daemon = True
+    timer.start()
+    return True
+
+
+def _launch_update_installer(installer_path: str, platform: str) -> bool:
+    """启动安装器；macOS 上优先等待当前应用退出后再打开安装包。"""
+    quit_handler = _get_update_quit_handler() if platform.startswith("macos-") else None
+    if platform.startswith("macos-") and quit_handler:
+        command = updater.install_after_quit_command(installer_path, platform, os.getpid())
+        _popen_hidden(command, detached=True)
+        return _schedule_update_quit_for_install(quit_handler)
+
+    command = updater.install_command(installer_path, platform)
+    _popen_hidden(command)
+    return False
 
 
 def _public_provider(provider: Optional[dict]) -> Optional[dict]:
@@ -808,15 +857,20 @@ def create_admin_app() -> FastAPI:
             installer_path = result.get("installerPath")
             if not installer_path:
                 raise updater.UpdateCheckError("下载安装包失败")
-            command = updater.install_command(installer_path, result.get("platform") or platform)
-            _popen_hidden(command)
-            is_macos = (result.get("platform") or platform).startswith("macos-")
+            resolved_platform = result.get("platform") or platform
+            quit_requested = _launch_update_installer(installer_path, resolved_platform)
+            is_macos = resolved_platform.startswith("macos-")
             return {
                 **result,
                 "success": True,
                 "installerStarted": True,
+                "quitRequested": quit_requested,
                 "message": (
-                    "更新包已下载并打开。请按 macOS 提示完成安装。"
+                    (
+                        "更新包已下载，应用即将退出并启动安装器。"
+                        if quit_requested
+                        else "更新包已下载并打开。请先退出当前应用，再按 macOS 提示完成安装。"
+                    )
                     if is_macos
                     else "安装包已下载并启动。安装器会沿用旧安装目录，并在安装前关闭正在运行的 CC Desktop Switch。"
                 ),
