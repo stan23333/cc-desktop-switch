@@ -8,18 +8,20 @@ import copy
 from datetime import datetime
 from typing import Optional
 
+from backend.model_alias import normalize_model_mappings
+
 CONFIG_DIR = os.path.expanduser("~/.cc-desktop-switch")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
 DEFAULT_UPDATE_URL = "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
 
 DEFAULT_CONFIG = {
-    "version": "1.0.13",
+    "version": "1.0.14",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],
     "settings": {
-        "theme": "light",
+        "theme": "default",
         "language": "zh",
         "proxyPort": 18080,
         "adminPort": 18081,
@@ -98,6 +100,45 @@ BUILTIN_PRESETS = [
             "haiku": "kimi-for-coding",
             "opus": "kimi-for-coding",
             "default": "kimi-for-coding",
+        },
+        "isBuiltin": True,
+    },
+    {
+        "id": "xiaomi-mimo-payg",
+        "name": "Xiaomi MiMo (Pay for Token)",
+        "baseUrl": "https://api.xiaomimimo.com/anthropic",
+        "authScheme": "bearer",
+        "apiFormat": "anthropic",
+        "models": {
+            "sonnet": "",
+            "haiku": "",
+            "opus": "",
+            "default": "mimo-v2.5-pro",
+        },
+        "isBuiltin": True,
+    },
+    {
+        "id": "xiaomi-mimo-token-plan",
+        "name": "Xiaomi MiMo (Token Plan)",
+        "baseUrl": "https://token-plan-cn.xiaomimimo.com/anthropic",
+        "authScheme": "bearer",
+        "apiFormat": "anthropic",
+        "baseUrlOptions": [
+            {
+                "label": "官方默认",
+                "value": "https://token-plan-cn.xiaomimimo.com/anthropic",
+            },
+            {
+                "label": "活动专属",
+                "value": "https://token-plan-sgp.xiaomimimo.com/anthropic",
+            },
+        ],
+        "baseUrlHint": "如果是活动赠送会员请使用活动专属 Base URL，若仍无法获取模型请访问 https://platform.xiaomimimo.com/console/plan-manage 获取专属Base URL。",
+        "models": {
+            "sonnet": "",
+            "haiku": "",
+            "opus": "",
+            "default": "mimo-v2.5-pro",
         },
         "isBuiltin": True,
     },
@@ -193,12 +234,7 @@ def _normalize_provider(provider: dict) -> dict:
     normalized.setdefault("requestOptions", {})
     normalized.setdefault("isBuiltin", False)
     normalized.setdefault("sortIndex", 0)
-    normalized.setdefault("models", {
-        "sonnet": "",
-        "haiku": "",
-        "opus": "",
-        "default": "",
-    })
+    normalized["models"] = normalize_model_mappings(normalized.get("models"))
     return normalized
 
 
@@ -401,7 +437,7 @@ def update_provider(provider_id: str, data: dict) -> Optional[dict]:
             if "models" in data and isinstance(data["models"], dict):
                 merged_models = dict(p.get("models", {}))
                 merged_models.update(data["models"])
-                updated["models"] = merged_models
+                updated["models"] = normalize_model_mappings(merged_models)
 
             config["providers"][i] = updated
             save_config(config)
@@ -445,7 +481,7 @@ def update_models(provider_id: str, models: dict) -> bool:
     config = load_config()
     for p in config.get("providers", []):
         if p["id"] == provider_id:
-            p["models"] = models
+            p["models"] = normalize_model_mappings(models)
             save_config(config)
             return True
     return False

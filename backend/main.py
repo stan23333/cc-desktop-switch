@@ -23,6 +23,7 @@ from backend import provider_tools
 from backend import registry
 from backend import update as updater
 from backend.api_adapters import normalize_api_format
+from backend.model_alias import provider_model_ids
 from backend.proxy import (
     build_upstream_url,
     create_proxy_app,
@@ -250,12 +251,9 @@ def _sync_desktop_for_active_provider() -> dict:
 
 
 def _provider_test_model(provider: dict) -> str:
-    models = provider.get("models") or {}
-    if isinstance(models, dict):
-        for key in ("default", "sonnet", "haiku", "opus"):
-            model = models.get(key)
-            if model:
-                return model
+    for model in provider_model_ids(provider):
+        if model:
+            return model
     return "claude-sonnet-4-6"
 
 
@@ -398,7 +396,7 @@ def _provider_compatibility(provider: dict) -> dict:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.13")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.14")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):

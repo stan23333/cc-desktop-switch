@@ -46,13 +46,12 @@
         <div class="switch-board">
           <div class="switch-board-head">
           <div>
-              <h1>Providers <button class="update-badge" id="dashboardUpdateBadge" type="button" data-action="install-update" hidden><i class="bi bi-cloud-arrow-down"></i><span data-i18n="dashboard.updateAvailable">有新版本</span></button></h1>
-              <p>选择一个提供商，启动转发后给 Claude 桌面版使用。</p>
+              <h1><span data-i18n="dashboard.title">提供商</span> <button class="update-badge" id="dashboardUpdateBadge" type="button" data-action="install-update" hidden><i class="bi bi-cloud-arrow-down"></i><span data-i18n="dashboard.updateAvailable">有新版本</span></button></h1>
+              <p data-i18n="dashboard.subtitle">选择一个提供商，启动转发后给 Claude 桌面版使用。</p>
             </div>
             <div class="switch-board-actions">
               <button class="btn btn-outline-primary btn-sm dashboard-import-button" type="button" data-action="open-ccswitch-import"><i class="bi bi-box-arrow-in-down"></i><span data-i18n="dashboard.importCcSwitch">导入 CC Switch 配置</span></button>
               <button class="btn btn-outline-danger btn-sm dashboard-clear-button" type="button" data-action="clear-desktop"><i class="bi bi-trash"></i><span data-i18n="dashboard.clearDesktopConfig">清除桌面版配置</span></button>
-              <a href="#providers/add" class="round-add" aria-label="添加提供商"><i class="bi bi-plus-lg"></i></a>
             </div>
           </div>
           <div class="provider-card-list" id="dashboardProviderCards"></div>
@@ -114,9 +113,16 @@
               <div class="mb-4">
                 <div class="label-line">
                   <label class="form-label required" for="providerBaseUrl">API Base URL</label>
-                  <button class="link-action" type="button" data-action="test-provider-form"><i class="bi bi-lightning-charge"></i><span>管理与测速</span></button>
+                  <button class="link-action" type="button" data-action="test-provider-form"><i class="bi bi-lightning-charge"></i><span data-i18n="providers.manageAndTest">管理与测速</span></button>
                 </div>
-                <input class="form-control form-control-lg" id="providerBaseUrl" name="baseUrl" value="https://api.deepseek.com/anthropic" autocomplete="url" required>
+                <div class="baseurl-input-wrap" id="providerBaseUrlControl">
+                  <input class="form-control form-control-lg" id="providerBaseUrl" name="baseUrl" value="https://api.deepseek.com/anthropic" autocomplete="url" required>
+                  <button class="baseurl-trigger" id="providerBaseUrlTrigger" type="button" data-action="toggle-baseurl-menu" aria-haspopup="listbox" aria-expanded="false" hidden>
+                    <i class="bi bi-chevron-down" aria-hidden="true"></i>
+                  </button>
+                  <div class="baseurl-menu" id="providerBaseUrlMenu" role="listbox" aria-labelledby="providerBaseUrlTrigger"></div>
+                </div>
+                <p class="field-hint" id="providerBaseUrlHint" hidden></p>
                 <div class="speed-result" id="formSpeedResult"></div>
               </div>
               <div class="mb-4">
@@ -128,11 +134,18 @@
               </div>
               <div class="mb-4">
                 <label class="form-label required" for="providerAuth">Auth Scheme</label>
-                <select class="form-select form-select-lg" id="providerAuth" name="authScheme">
-                  <option value="bearer">bearer</option>
-                  <option value="x-api-key">x-api-key</option>
-                  <option value="none">none</option>
-                </select>
+                <input id="providerAuth" name="authScheme" type="hidden" value="bearer">
+                <div class="auth-scheme-menu-wrap" id="providerAuthControl">
+                  <button class="form-select form-select-lg auth-scheme-trigger" id="providerAuthTrigger" type="button" data-action="toggle-auth-scheme-menu" aria-haspopup="listbox" aria-expanded="false">
+                    <span>bearer</span>
+                    <i class="bi bi-chevron-down"></i>
+                  </button>
+                  <div class="auth-scheme-menu" id="providerAuthMenu" role="listbox" aria-labelledby="providerAuthTrigger">
+                    <button class="auth-scheme-option selected" type="button" role="option" data-action="select-auth-scheme" data-value="bearer" aria-selected="true"><span>bearer</span><i class="bi bi-check2"></i></button>
+                    <button class="auth-scheme-option" type="button" role="option" data-action="select-auth-scheme" data-value="x-api-key" aria-selected="false"><span>x-api-key</span></button>
+                    <button class="auth-scheme-option" type="button" role="option" data-action="select-auth-scheme" data-value="none" aria-selected="false"><span>none</span></button>
+                  </div>
+                </div>
               </div>
               <details class="advanced-provider-options" open>
                 <summary><i class="bi bi-sliders"></i><span data-i18n="providersAdd.compatTitle">高级：第三方兼容接口</span><i class="bi bi-chevron-down compat-chevron"></i></summary>
@@ -154,18 +167,10 @@
                     <h2 data-i18n="providersAdd.mappingTitle">模型映射</h2>
                     <p data-i18n="providersAdd.mappingSubtitle">把 Claude 的 Sonnet / Haiku / Opus 映射到这个供应商真实支持的模型。</p>
                   </div>
-                  <button class="btn btn-outline-primary btn-sm" type="button" data-action="fetch-form-models"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="models.fetch">自动获取模型</span></button>
+                  <button class="provider-mapping-fetch" type="button" data-action="fetch-form-models"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="models.fetch">获取模型</span></button>
                 </div>
                 <div class="form-mapping-grid" id="providerMappingStack"></div>
                 <div class="preset-options" id="providerPresetOptions" hidden></div>
-                <div class="default-model-row">
-                  <label class="form-label" for="providerDefaultModel" data-i18n="models.defaultModel">默认模型</label>
-                  <select class="form-select" id="providerDefaultModel">
-                    <option value="sonnet">Sonnet</option>
-                    <option value="haiku">Haiku</option>
-                    <option value="opus">Opus</option>
-                  </select>
-                </div>
                 <p class="inline-status" id="providerModelFetchResult"></p>
                 <div class="apply-explain">
                   <i class="bi bi-info-circle"></i>
@@ -278,9 +283,9 @@
         <article class="panel proxy-control">
           <div class="proxy-running">
             <span class="pulse-dot"></span>
-            <div>
+            <div class="proxy-running-meta">
               <strong id="proxyStateText">运行中</strong>
-              <p data-i18n="proxy.localhost">监听 localhost</p>
+              <p data-i18n="proxy.localhost">本机监听</p>
             </div>
           </div>
           <div class="port-control">
@@ -312,9 +317,12 @@
           <div class="settings-row">
             <strong data-i18n="settings.theme">主题</strong>
             <div class="segmented theme-segment">
-              <button class="btn active" type="button" data-theme-action="light"><i class="bi bi-sun"></i><span data-i18n="theme.light">浅色</span></button>
-              <button class="btn" type="button" data-theme-action="dark"><i class="bi bi-moon"></i><span data-i18n="theme.dark">深色</span></button>
-              <button class="btn" type="button" data-theme-action="auto"><i class="bi bi-display"></i><span data-i18n="theme.auto">跟随系统</span></button>
+              <button class="btn active theme-swatch theme-swatch-default" type="button" data-theme-action="default" aria-label="Default theme"></button>
+              <button class="btn theme-swatch theme-swatch-green" type="button" data-theme-action="green" aria-label="Green theme"></button>
+              <button class="btn theme-swatch theme-swatch-orange" type="button" data-theme-action="orange" aria-label="Orange theme"></button>
+              <button class="btn theme-swatch theme-swatch-gray" type="button" data-theme-action="gray" aria-label="Gray theme"></button>
+              <button class="btn theme-swatch theme-swatch-dark" type="button" data-theme-action="dark" aria-label="Dark theme"></button>
+              <button class="btn theme-swatch theme-swatch-white" type="button" data-theme-action="white" aria-label="White theme"></button>
             </div>
           </div>
           <div class="settings-row">
@@ -372,7 +380,7 @@
             <div>
               <div class="settings-actions">
                 <button class="btn btn-outline-primary btn-sm" type="button" data-action="detect-ccswitch"><i class="bi bi-search"></i><span data-i18n="settings.ccswitchDetect">检测配置</span></button>
-                <button class="btn btn-primary btn-sm" type="button" data-action="import-ccswitch"><i class="bi bi-box-arrow-in-down"></i><span data-i18n="settings.ccswitchImportButton">导入兼容项</span></button>
+                <button class="btn btn-outline-primary btn-sm" type="button" data-action="import-ccswitch"><i class="bi bi-box-arrow-in-down"></i><span data-i18n="settings.ccswitchImportButton">导入兼容项</span></button>
               </div>
               <div class="ccswitch-import-list" id="ccSwitchImportList"></div>
               <p class="settings-note" data-i18n="settings.ccswitchImportHint">只导入 Anthropic 兼容配置；OpenAI 格式会显示为暂不导入，避免转换风险。</p>
@@ -382,11 +390,11 @@
 
         <article class="panel about-panel">
           <h2 data-i18n="settings.about">关于</h2>
-          <div><span data-i18n="settings.version">版本</span><strong>1.0.13</strong></div>
-          <div><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
-          <div><span data-i18n="settings.checkUpdate">检查更新</span><span class="settings-actions inline-actions"><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button><button class="btn btn-primary btn-sm" id="settingsInstallUpdate" type="button" data-action="install-update" hidden><i class="bi bi-download"></i><span data-i18n="settings.installUpdate">下载并安装</span></button></span></div>
+          <div class="about-row"><span data-i18n="settings.version">版本</span><strong>1.0.14</strong></div>
+          <div class="about-row"><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
+          <div class="about-row"><span data-i18n="settings.checkUpdate">检查更新</span><span class="settings-actions inline-actions"><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button><button class="btn btn-primary btn-sm" id="settingsInstallUpdate" type="button" data-action="install-update" hidden><i class="bi bi-download"></i><span data-i18n="settings.installUpdate">下载并安装</span></button></span></div>
           <p class="update-status" id="updateStatus"></p>
-          <div><span>GitHub</span><a href="https://github.com/" target="_blank" rel="noreferrer"><i class="bi bi-box-arrow-up-right"></i></a></div>
+          <div class="about-row"><span>GitHub</span><a href="https://github.com/lonr-6/cc-desktop-switch" target="_blank" rel="noreferrer"><i class="bi bi-box-arrow-up-right"></i></a></div>
         </article>
       </section>
 

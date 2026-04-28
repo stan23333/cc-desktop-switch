@@ -142,7 +142,7 @@ def _pick_model(model_ids: list[str], keywords: tuple[str, ...], fallback_index:
 
 
 def suggest_model_mappings(model_ids: list[str]) -> dict:
-    """根据模型名称给 Claude Sonnet/Haiku/Opus 自动推荐映射。"""
+    """根据模型名称给 Claude 默认槽位自动推荐映射。"""
     usable = _usable_model_ids(model_ids)
     sonnet = _pick_model(
         usable,
@@ -160,10 +160,13 @@ def suggest_model_mappings(model_ids: list[str]) -> dict:
     )
     default = sonnet or opus or haiku or (usable[0] if usable else "")
     return {
-        "sonnet": sonnet or default,
-        "haiku": haiku or default,
-        "opus": opus or default,
         "default": default,
+        "opus_4_7": opus or default,
+        "opus_4_6": "",
+        "opus_3": "",
+        "sonnet_4_6": sonnet or default,
+        "sonnet_4_5": "",
+        "haiku_4_5": haiku or default,
     }
 
 

@@ -2,20 +2,89 @@
 
 from __future__ import annotations
 
+import copy
 import re
 from typing import Optional
 
 
-MODEL_ORDER = ("default", "sonnet", "opus", "haiku")
+MODEL_SLOTS = (
+    {
+        "key": "default",
+        "legacy": ("default",),
+        "claude_ids": (),
+    },
+    {
+        "key": "opus_4_7",
+        "legacy": ("opus",),
+        "claude_ids": ("claude-opus-4-7",),
+    },
+    {
+        "key": "opus_4_6",
+        "legacy": (),
+        "claude_ids": ("claude-opus-4-6",),
+    },
+    {
+        "key": "opus_3",
+        "legacy": (),
+        "claude_ids": ("claude-3-opus",),
+    },
+    {
+        "key": "sonnet_4_6",
+        "legacy": ("sonnet",),
+        "claude_ids": ("claude-sonnet-4-6",),
+    },
+    {
+        "key": "sonnet_4_5",
+        "legacy": (),
+        "claude_ids": ("claude-sonnet-4-5",),
+    },
+    {
+        "key": "haiku_4_5",
+        "legacy": ("haiku",),
+        "claude_ids": ("claude-haiku-4-5",),
+    },
+)
+MODEL_ORDER = tuple(item["key"] for item in MODEL_SLOTS)
+DEFAULT_MODEL_KEY = "default"
+LEGACY_MODEL_KEYS = ("default", "sonnet", "opus", "haiku")
+CLAUDE_ID_TO_SLOT = {
+    claude_id.lower(): slot["key"]
+    for slot in MODEL_SLOTS
+    for claude_id in slot["claude_ids"]
+}
+
+
+def empty_model_mappings() -> dict:
+    return {key: "" for key in MODEL_ORDER}
+
+
+def normalize_model_mappings(models: Optional[dict]) -> dict:
+    """把旧四槽位和新多槽位统一成当前结构。"""
+    normalized = empty_model_mappings()
+    if not isinstance(models, dict):
+        return normalized
+
+    source = copy.deepcopy(models)
+    default = str(source.get("default") or "").strip()
+    normalized["default"] = default
+
+    for slot in MODEL_SLOTS:
+        key = slot["key"]
+        if key == DEFAULT_MODEL_KEY:
+            continue
+        for candidate in (key, *slot["legacy"]):
+            value = str(source.get(candidate) or "").strip()
+            if value:
+                normalized[key] = value
+                break
+    return normalized
 
 
 def provider_model_ids(provider: Optional[dict]) -> list[str]:
     """按稳定顺序返回 provider 暴露给 Claude 的真实模型 ID。"""
     if not provider:
         return []
-    models = provider.get("models") or {}
-    if not isinstance(models, dict):
-        return []
+    models = normalize_model_mappings(provider.get("models") or {})
     ordered: list[str] = []
     for key in MODEL_ORDER:
         model_id = str(models.get(key) or "").strip()
@@ -99,3 +168,11 @@ def resolve_model_alias(providers: list[dict], requested_model: str) -> tuple[Op
             # 允许用户手动写入未出现在映射里的模型 ID。
             return provider, model_id, True
     return None, requested, False
+
+
+def resolve_requested_model_slot(requested_model: str) -> Optional[str]:
+    """把 Claude 请求模型名解析为当前映射槽位。"""
+    requested = str(requested_model or "").strip().lower()
+    if not requested:
+        return None
+    return CLAUDE_ID_TO_SLOT.get(requested)

@@ -18,25 +18,11 @@ from backend.api_adapters import (
 )
 from backend.model_alias import (
     all_provider_model_entries,
+    normalize_model_mappings,
     provider_model_ids as alias_provider_model_ids,
     resolve_model_alias,
+    resolve_requested_model_slot,
 )
-
-# 标准 Claude 模型名列表（用于匹配和显示）
-CLAUDE_MODEL_NAMES = {
-    "sonnet": [
-        "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-sonnet-4-0",
-        "claude-3-sonnet",
-    ],
-    "opus": [
-        "claude-opus-4-7", "claude-opus-4-5", "claude-opus-4-0",
-        "claude-3-opus",
-    ],
-    "haiku": [
-        "claude-haiku-3-5", "claude-haiku-4-5", "claude-3-haiku",
-    ],
-}
-
 
 def provider_model_ids(provider: Optional[dict]) -> list:
     """返回当前 provider 暴露给 Claude Desktop 的真实模型 ID。"""
@@ -140,7 +126,7 @@ def map_model(original_model: str, provider: Optional[dict]) -> str:
     if not provider or not original_model:
         return original_model
 
-    models_config = provider.get("models", {})
+    models_config = normalize_model_mappings(provider.get("models", {}))
     if not models_config:
         return original_model
 
@@ -149,27 +135,10 @@ def map_model(original_model: str, provider: Optional[dict]) -> str:
     if original_model in provider_model_ids(provider):
         return original_model
 
-    model_lower = original_model.lower()
+    mapped_slot = resolve_requested_model_slot(original_model)
+    if mapped_slot:
+        return models_config.get(mapped_slot) or models_config.get("default") or original_model
 
-    # 按优先级匹配：opus → haiku → sonnet
-    for tier, keywords in [("opus", CLAUDE_MODEL_NAMES["opus"]),
-                            ("haiku", CLAUDE_MODEL_NAMES["haiku"]),
-                            ("sonnet", CLAUDE_MODEL_NAMES["sonnet"])]:
-        for kw in keywords:
-            if kw in model_lower:
-                mapped = models_config.get(tier)
-                if mapped:
-                    return mapped
-
-    # 也直接检查关键词
-    if "opus" in model_lower:
-        return models_config.get("opus") or models_config.get("default") or original_model
-    if "haiku" in model_lower:
-        return models_config.get("haiku") or models_config.get("default") or original_model
-    if "sonnet" in model_lower:
-        return models_config.get("sonnet") or models_config.get("default") or original_model
-
-    # 默认模型
     return models_config.get("default") or original_model
 
 
@@ -551,7 +520,7 @@ from backend.config import get_active_provider, get_gateway_api_key, get_provide
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.13")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.14")
 
     def upstream_error_status(result: dict) -> int:
         """把上游错误转换成 HTTP 错误状态，避免桌面端按成功响应解析。"""

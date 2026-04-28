@@ -6,12 +6,31 @@
     { key: "haiku", title: "Haiku", icon: "bi-leaf", source: "claude-haiku-3-5" },
     { key: "opus", title: "Opus", icon: "bi-box", source: "claude-opus-4-7" },
   ];
+  const providerFormModelSlots = [
+    { key: "default", label: "Default", icon: "bi-circle-fill", iconClass: "default", source: "未配置映射时默认使用这一项", required: true },
+    { key: "opus_4_7", label: "Opus 4.7", icon: "bi-box", iconClass: "opus", source: "claude-opus-4-7" },
+    { key: "opus_4_6", label: "Opus 4.6", icon: "bi-box", iconClass: "opus", source: "claude-opus-4-6" },
+    { key: "opus_3", label: "Opus 3", icon: "bi-box", iconClass: "opus", source: "claude-3-opus" },
+    { key: "sonnet_4_6", label: "Sonnet 4.6", icon: "bi-stars", iconClass: "sonnet", source: "claude-sonnet-4-6" },
+    { key: "sonnet_4_5", label: "Sonnet 4.5", icon: "bi-stars", iconClass: "sonnet", source: "claude-sonnet-4-5" },
+    { key: "haiku_4_5", label: "Haiku 4.5", icon: "bi-leaf", iconClass: "haiku", source: "claude-haiku-4-5" },
+  ];
+  const availableThemes = ["default", "green", "orange", "gray", "dark", "white"];
+  const providerAuthSchemes = ["bearer", "x-api-key", "none"];
+  const providerFormDefaultRows = ["default", "opus_4_7", "sonnet_4_6", "haiku_4_5"];
   let pendingDeleteId = null;
   let selectedPreset = null;
   let presetCache = [];
   let formApiFormat = "Anthropic";
   let formModelCapabilities = {};
   let formRequestOptions = {};
+  let providerFormMappings = {};
+  let providerFormRows = [...providerFormDefaultRows];
+  let providerAvailableModels = [];
+  let openProviderSlotMenuIndex = null;
+  let openProviderModelMenuKey = null;
+  let baseUrlMenuOpen = false;
+  let authSchemeMenuOpen = false;
   let editingProviderId = null;
   let deleteModal = null;
   let restartReminderModal = null;
@@ -229,17 +248,19 @@
   }
 
   function emptyMappings() {
-    return {
-      sonnet: "",
-      haiku: "",
-      opus: "",
-      default: "",
-    };
+    return Object.fromEntries(providerFormModelSlots.map((slot) => [slot.key, ""]));
   }
 
   function normalizeMappings(mappings = {}) {
-    const normalized = { ...emptyMappings(), ...mappings };
-    normalized.default = normalized.default || normalized.sonnet || normalized.haiku || normalized.opus || "";
+    const normalized = emptyMappings();
+    if (!mappings || typeof mappings !== "object") return normalized;
+    normalized.default = String(mappings.default || "").trim();
+    normalized.opus_4_7 = String(mappings.opus_4_7 || mappings.opus || "").trim();
+    normalized.opus_4_6 = String(mappings.opus_4_6 || "").trim();
+    normalized.opus_3 = String(mappings.opus_3 || "").trim();
+    normalized.sonnet_4_6 = String(mappings.sonnet_4_6 || mappings.sonnet || "").trim();
+    normalized.sonnet_4_5 = String(mappings.sonnet_4_5 || "").trim();
+    normalized.haiku_4_5 = String(mappings.haiku_4_5 || mappings.haiku || "").trim();
     return normalized;
   }
 
@@ -325,13 +346,72 @@
   function modelsMatch(left = {}, right = {}) {
     const a = normalizeMappings(left);
     const b = normalizeMappings(right);
-    return ["sonnet", "haiku", "opus", "default"].every((key) => (a[key] || "") === (b[key] || ""));
+    return providerFormModelSlots.every((slot) => (a[slot.key] || "") === (b[slot.key] || ""));
   }
 
   function presetMatchesProvider(preset, provider) {
     if (!preset || !provider) return false;
+    const baseUrlOptions = Array.isArray(preset.baseUrlOptions) ? preset.baseUrlOptions : [];
     return normalizePresetKey(preset.name) === normalizePresetKey(provider.name)
-      || normalizePresetKey(preset.baseUrl) === normalizePresetKey(provider.baseUrl);
+      || normalizePresetKey(preset.baseUrl) === normalizePresetKey(provider.baseUrl)
+      || baseUrlOptions.some((option) => normalizePresetKey(option?.value) === normalizePresetKey(provider.baseUrl));
+  }
+
+  function presetBaseUrlOptions(preset = null) {
+    return Array.isArray(preset?.baseUrlOptions) ? preset.baseUrlOptions.filter((option) => option?.value) : [];
+  }
+
+  function closeBaseUrlMenu() {
+    if (!baseUrlMenuOpen) return;
+    baseUrlMenuOpen = false;
+    renderBaseUrlOptions();
+  }
+
+  function toggleBaseUrlMenu() {
+    if (!presetBaseUrlOptions(selectedPreset).length) return;
+    baseUrlMenuOpen = !baseUrlMenuOpen;
+    renderBaseUrlOptions();
+  }
+
+  function setBaseUrlValue(value) {
+    const input = $("#providerBaseUrl");
+    if (!input) return;
+    input.value = value;
+    closeBaseUrlMenu();
+  }
+
+  function renderBaseUrlOptions(preset = selectedPreset) {
+    const input = $("#providerBaseUrl");
+    const trigger = $("#providerBaseUrlTrigger");
+    const menu = $("#providerBaseUrlMenu");
+    const wrap = $("#providerBaseUrlControl");
+    const hint = $("#providerBaseUrlHint");
+    if (!input || !trigger || !menu || !wrap || !hint) return;
+    const options = presetBaseUrlOptions(preset);
+    const helpText = String(preset?.baseUrlHint || "").trim();
+    trigger.hidden = !options.length;
+    trigger.disabled = !options.length;
+    trigger.setAttribute("aria-expanded", options.length && baseUrlMenuOpen ? "true" : "false");
+    wrap.classList.toggle("open", !!options.length && baseUrlMenuOpen);
+    menu.innerHTML = options.map((option) => {
+      const selected = input.value.trim() === option.value;
+      return `
+        <button
+          class="baseurl-option ${selected ? "selected" : ""}"
+          type="button"
+          role="option"
+          data-action="select-baseurl-option"
+          data-baseurl-value="${escapeHtml(option.value)}"
+          aria-selected="${selected ? "true" : "false"}"
+        >
+          <span>${escapeHtml(option.value)}</span>
+          <small>${escapeHtml(option.label || "")}</small>
+          ${selected ? '<i class="bi bi-check2"></i>' : ""}
+        </button>
+      `;
+    }).join("");
+    hint.textContent = helpText;
+    hint.hidden = !helpText;
   }
 
   function capabilitiesForCurrentMappings(mappings = collectProviderMappings()) {
@@ -341,36 +421,270 @@
     )));
   }
 
-  function defaultKeyFromMappings(mappings = {}) {
-    const normalized = normalizeMappings(mappings);
-    return modelMeta.find((model) => normalized[model.key] === normalized.default)?.key || "sonnet";
+  function formMappingRowsFromMappings(mappings = {}) {
+    const rows = [...providerFormDefaultRows];
+    providerFormModelSlots.forEach((slot) => {
+      if (slot.key !== "default" && mappings[slot.key] && !rows.includes(slot.key)) {
+        rows.push(slot.key);
+      }
+    });
+    return rows;
   }
 
-  function formMappingMarkup(mappings = {}) {
-    const normalized = normalizeMappings(mappings);
-    return modelMeta.map((model) => `
-      <article class="form-mapping-card">
-        <div class="mapping-title">
-          <span class="mapping-icon ${model.key}"><i class="bi ${model.icon}"></i></span>
-          <div>
-            <strong>${model.title}</strong>
-            <span>${model.source}</span>
+  function slotByKey(key) {
+    return providerFormModelSlots.find((slot) => slot.key === key) || providerFormModelSlots[0];
+  }
+
+  function slotOptionsForRow(currentKey) {
+    const used = new Set(providerFormRows.filter((key) => key !== currentKey));
+    return providerFormModelSlots.filter((slot) => !used.has(slot.key));
+  }
+
+  function providerModelOptionsMarkup(currentValue = "") {
+    return providerAvailableModels.map((modelId) => (`
+      <button
+        class="mapping-slot-option ${modelId === currentValue ? "selected" : ""}"
+        type="button"
+        role="option"
+        data-action="select-provider-model-option"
+        data-model-value="${escapeHtml(modelId)}"
+        aria-selected="${modelId === currentValue ? "true" : "false"}"
+      >
+        <span>${escapeHtml(modelId)}</span>
+        ${modelId === currentValue ? '<i class="bi bi-check2"></i>' : ""}
+      </button>
+    `)).join("");
+  }
+
+  function slotMenuMarkup(rowKey, index) {
+    const slot = slotByKey(rowKey);
+    const isRequired = rowKey === "default";
+    const expanded = openProviderSlotMenuIndex === index;
+    const options = slotOptionsForRow(rowKey).map((option) => (`
+      <button
+        class="mapping-slot-option ${option.key === rowKey ? "selected" : ""}"
+        type="button"
+        role="option"
+        data-action="select-provider-model-slot"
+        data-row-index="${index}"
+        data-slot-key="${escapeHtml(option.key)}"
+        aria-selected="${option.key === rowKey ? "true" : "false"}"
+      >
+        <span>${escapeHtml(option.label)}</span>
+        ${option.key === rowKey ? '<i class="bi bi-check2"></i>' : ""}
+      </button>
+    `)).join("");
+    return `
+      <div class="mapping-slot-menu-wrap ${expanded ? "open" : ""}">
+        <button
+          class="form-select mapping-slot-trigger"
+          id="providerMappingSlot-${index}"
+          type="button"
+          ${isRequired ? "disabled" : ""}
+          data-action="toggle-provider-model-slot-menu"
+          data-row-index="${index}"
+          aria-haspopup="listbox"
+          aria-expanded="${expanded ? "true" : "false"}"
+        >
+          <span>${escapeHtml(slot.label)}</span>
+          <i class="bi bi-chevron-down"></i>
+        </button>
+        ${isRequired ? "" : `
+          <div class="mapping-slot-menu" role="listbox" aria-labelledby="providerMappingSlot-${index}">
+            ${options}
           </div>
+        `}
+      </div>
+    `;
+  }
+
+  function formMappingMarkup() {
+    return providerFormRows.map((rowKey, index) => {
+      const slot = slotByKey(rowKey);
+      const isRequired = rowKey === "default";
+      const currentProviderModel = providerFormMappings[rowKey] || "";
+      return `
+        <article class="form-mapping-row">
+          <div class="form-mapping-left">
+            <label class="form-label visually-hidden" for="providerMappingSlot-${index}">${t("providersAdd.claudeModel")}</label>
+            <div class="mapping-select-wrap">
+              <span class="mapping-icon ${slot.iconClass}"><i class="bi ${slot.icon}"></i></span>
+              ${slotMenuMarkup(rowKey, index)}
+            </div>
+          </div>
+          <div class="form-mapping-right">
+            <label class="form-label visually-hidden" for="providerMappingValue-${index}">${t("providersAdd.providerModel")}</label>
+            <div class="provider-model-input-wrap ${openProviderModelMenuKey === rowKey ? "open" : ""}">
+              <input
+                class="form-control provider-model-input"
+                id="providerMappingValue-${index}"
+                data-provider-model-input="${escapeHtml(rowKey)}"
+                value="${escapeHtml(providerFormMappings[rowKey] || "")}"
+                placeholder="${escapeHtml(t("providersAdd.providerModelPlaceholder"))}"
+                ${isRequired ? "required" : ""}
+              >
+              <button
+                class="provider-model-trigger"
+                type="button"
+                data-action="toggle-provider-model-menu"
+                data-row-key="${escapeHtml(rowKey)}"
+                ${providerAvailableModels.length ? "" : "disabled"}
+                aria-haspopup="listbox"
+                aria-expanded="${providerAvailableModels.length && openProviderModelMenuKey === rowKey ? "true" : "false"}"
+                aria-label="${escapeHtml(t("providersAdd.providerModel"))}"
+              >
+                <i class="bi bi-chevron-down" aria-hidden="true"></i>
+              </button>
+              ${providerAvailableModels.length ? `
+                <div class="mapping-slot-menu provider-model-menu" role="listbox" aria-labelledby="providerMappingValue-${index}">
+                  ${providerModelOptionsMarkup(currentProviderModel)}
+                </div>
+              ` : ""}
+            </div>
+          </div>
+          <div class="form-mapping-actions">
+            ${isRequired
+              ? '<span class="mapping-remove-placeholder" aria-hidden="true"></span>'
+              : `<button class="btn btn-outline-secondary btn-sm mapping-remove-button" type="button" data-action="remove-provider-model-row" data-row-index="${index}" aria-label="${escapeHtml(t("providersAdd.removeMapping"))}">${escapeHtml(t("providersAdd.removeMapping"))}</button>`}
+          </div>
+        </article>
+      `;
+    }).join("");
+  }
+
+  function renderProviderMappings() {
+    const stack = $("#providerMappingStack");
+    if (!stack) return;
+    if (openProviderSlotMenuIndex !== null && !providerFormRows[openProviderSlotMenuIndex]) {
+      openProviderSlotMenuIndex = null;
+    }
+    if (openProviderModelMenuKey !== null && !providerFormRows.includes(openProviderModelMenuKey)) {
+      openProviderModelMenuKey = null;
+    }
+    const canAddMoreRows = providerFormModelSlots.some((slot) => !providerFormRows.includes(slot.key));
+    stack.innerHTML = `
+      <div class="provider-mapping-card">
+        <div class="provider-mapping-list">
+          ${formMappingMarkup()}
         </div>
-        <input class="form-control" data-provider-model-input="${model.key}" value="${escapeHtml(normalized[model.key] || "")}" placeholder="${escapeHtml(model.source)}">
-      </article>
+        <div class="provider-mapping-footer">
+          <button class="btn btn-outline-primary btn-sm" type="button" data-action="add-provider-model-row" ${canAddMoreRows ? "" : "disabled"}>
+            <i class="bi bi-plus-lg"></i><span>${escapeHtml(t("providersAdd.addMapping"))}</span>
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function setProviderMappings(mappings = {}, options = {}) {
+    providerFormMappings = normalizeMappings(mappings);
+    providerFormRows = formMappingRowsFromMappings(providerFormMappings);
+    if (Array.isArray(options.availableModels)) {
+      providerAvailableModels = options.availableModels.slice();
+    }
+    openProviderSlotMenuIndex = null;
+    openProviderModelMenuKey = null;
+    renderProviderMappings();
+  }
+
+  function updateProviderModelInput(slotKey, value) {
+    providerFormMappings[slotKey] = value.trim();
+  }
+
+  function moveProviderMappingRow(index, nextKey) {
+    const prevKey = providerFormRows[index];
+    if (!nextKey || prevKey === nextKey) return;
+    const currentValue = providerFormMappings[prevKey] || "";
+    providerFormRows[index] = nextKey;
+    if (!providerFormMappings[nextKey]) {
+      providerFormMappings[nextKey] = currentValue;
+    }
+    if (prevKey !== "default") {
+      providerFormMappings[prevKey] = "";
+    }
+    openProviderSlotMenuIndex = null;
+    renderProviderMappings();
+  }
+
+  function addProviderMappingRow() {
+    const remaining = providerFormModelSlots
+      .map((slot) => slot.key)
+      .find((key) => !providerFormRows.includes(key));
+    if (!remaining) return;
+    providerFormRows = [...providerFormRows, remaining];
+    openProviderSlotMenuIndex = null;
+    openProviderModelMenuKey = null;
+    renderProviderMappings();
+  }
+
+  function removeProviderMappingRow(index) {
+    const key = providerFormRows[index];
+    if (!key || key === "default") return;
+    providerFormRows = providerFormRows.filter((_, rowIndex) => rowIndex !== index);
+    providerFormMappings[key] = "";
+    openProviderSlotMenuIndex = null;
+    if (openProviderModelMenuKey === key) openProviderModelMenuKey = null;
+    renderProviderMappings();
+  }
+
+  function toggleProviderSlotMenu(index) {
+    openProviderSlotMenuIndex = openProviderSlotMenuIndex === index ? null : index;
+    renderProviderMappings();
+  }
+
+  function closeProviderSlotMenu() {
+    if (openProviderSlotMenuIndex === null) return;
+    openProviderSlotMenuIndex = null;
+    renderProviderMappings();
+  }
+
+  function toggleProviderModelMenu(rowKey) {
+    openProviderModelMenuKey = openProviderModelMenuKey === rowKey ? null : rowKey;
+    renderProviderMappings();
+  }
+
+  function closeProviderModelMenu() {
+    if (openProviderModelMenuKey === null) return;
+    openProviderModelMenuKey = null;
+    renderProviderMappings();
+  }
+
+  function renderAuthSchemeControl() {
+    const input = $("#providerAuth");
+    const trigger = $("#providerAuthTrigger");
+    const menu = $("#providerAuthMenu");
+    const wrap = $("#providerAuthControl");
+    if (!input || !trigger || !menu || !wrap) return;
+    const value = providerAuthSchemes.includes(input.value) ? input.value : "bearer";
+    input.value = value;
+    $("span", trigger).textContent = value;
+    trigger.setAttribute("aria-expanded", authSchemeMenuOpen ? "true" : "false");
+    wrap.classList.toggle("open", authSchemeMenuOpen);
+    menu.innerHTML = providerAuthSchemes.map((item) => `
+      <button class="auth-scheme-option ${item === value ? "selected" : ""}" type="button" role="option" data-action="select-auth-scheme" data-value="${escapeHtml(item)}" aria-selected="${item === value ? "true" : "false"}">
+        <span>${escapeHtml(item)}</span>
+        ${item === value ? '<i class="bi bi-check2"></i>' : ""}
+      </button>
     `).join("");
   }
 
-  function setProviderMappings(mappings = {}) {
-    const stack = $("#providerMappingStack");
-    if (!stack) return;
-    const normalized = normalizeMappings(mappings);
-    stack.innerHTML = formMappingMarkup(normalized);
-    const defaultSelect = $("#providerDefaultModel");
-    if (defaultSelect) defaultSelect.value = defaultKeyFromMappings(normalized);
-    const result = $("#providerModelFetchResult");
-    if (result) result.textContent = "";
+  function setAuthSchemeValue(value) {
+    const input = $("#providerAuth");
+    if (!input) return;
+    input.value = providerAuthSchemes.includes(value) ? value : "bearer";
+    authSchemeMenuOpen = false;
+    renderAuthSchemeControl();
+  }
+
+  function toggleAuthSchemeMenu() {
+    authSchemeMenuOpen = !authSchemeMenuOpen;
+    renderAuthSchemeControl();
+  }
+
+  function closeAuthSchemeMenu() {
+    if (!authSchemeMenuOpen) return;
+    authSchemeMenuOpen = false;
+    renderAuthSchemeControl();
   }
 
   function renderPresetOptions(preset = null, mappings = null) {
@@ -431,13 +745,7 @@
   }
 
   function collectProviderMappings() {
-    const mappings = emptyMappings();
-    $all("[data-provider-model-input]").forEach((input) => {
-      mappings[input.dataset.providerModelInput] = input.value.trim();
-    });
-    const defaultKey = $("#providerDefaultModel")?.value || "sonnet";
-    mappings.default = mappings[defaultKey] || mappings.sonnet || mappings.haiku || mappings.opus || "";
-    return mappings;
+    return normalizeMappings(providerFormMappings);
   }
 
   function providerPayloadFromForm(includeModels = true) {
@@ -462,7 +770,12 @@
   }
 
   function providerCardMarkup(provider) {
-    const mapping = [provider.mappings.sonnet, provider.mappings.haiku, provider.mappings.opus]
+    const mapping = [
+      provider.mappings.default,
+      provider.mappings.sonnet_4_6,
+      provider.mappings.haiku_4_5,
+      provider.mappings.opus_4_7,
+    ]
       .filter(Boolean)
       .slice(0, 2)
       .join(" / ");
@@ -679,6 +992,8 @@
   function resetProviderForm() {
     editingProviderId = null;
     selectedPreset = null;
+    providerAvailableModels = [];
+    baseUrlMenuOpen = false;
     renderPresetOptions(null);
     updatePresetSelection();
     formModelCapabilities = {};
@@ -686,8 +1001,10 @@
     setProviderFormMode("providersAdd.title");
     $("#providerName").value = "";
     $("#providerBaseUrl").value = "";
+    renderBaseUrlOptions(null);
     setApiKeyInputState(false);
     $("#providerAuth").value = "bearer";
+    renderAuthSchemeControl();
     setFormApiFormat("anthropic");
     setProviderMappings(emptyMappings());
   }
@@ -695,12 +1012,15 @@
   function applyPresetToForm(preset, notify = true) {
     $("#providerName").value = preset.name;
     $("#providerBaseUrl").value = preset.baseUrl;
-    $("#providerAuth").value = preset.authScheme;
+    baseUrlMenuOpen = false;
+    renderBaseUrlOptions(preset);
+    setAuthSchemeValue(preset.authScheme);
     setApiKeyInputState(false);
     selectedPreset = preset;
     setFormApiFormat(preset.apiFormat === "OpenAI" ? "openai_chat" : "anthropic");
     formModelCapabilities = normalizeCapabilities(preset.modelCapabilities || {});
     formRequestOptions = normalizeRequestOptions(preset.requestOptions || {});
+    providerAvailableModels = [];
     setProviderMappings(preset.models || emptyMappings());
     renderPresetOptions(preset, preset.models || emptyMappings());
     updatePresetSelection();
@@ -726,6 +1046,8 @@
     setProviderFormMode("providersAdd.editTitle");
     $("#providerName").value = provider.name;
     $("#providerBaseUrl").value = provider.baseUrl;
+    baseUrlMenuOpen = false;
+    renderBaseUrlOptions(selectedPreset);
     setApiKeyInputState(provider.hasApiKey);
     if (provider.hasApiKey) {
       try {
@@ -736,8 +1058,9 @@
         showToast(error.message || t("toast.requestFailed"));
       }
     }
-    $("#providerAuth").value = provider.authScheme;
+    setAuthSchemeValue(provider.authScheme);
     setFormApiFormat(["openai", "openai_chat"].includes(provider.apiFormat) ? "openai_chat" : "anthropic");
+    providerAvailableModels = [];
     setProviderMappings(provider.mappings || emptyMappings());
     renderPresetOptions(selectedPreset, provider.mappings || emptyMappings());
     updatePresetSelection();
@@ -800,7 +1123,7 @@
     if (!provider) return;
     const defaultSelect = $("#defaultModel");
     if (defaultSelect) {
-      const defaultValue = provider.mappings.default || provider.mappings.sonnet || "";
+      const defaultValue = provider.mappings.default || provider.mappings.sonnet_4_6 || "";
       const defaultKey = modelMeta.find((model) => provider.mappings[model.key] === defaultValue)?.key || "sonnet";
       defaultSelect.value = defaultKey;
     }
@@ -862,6 +1185,7 @@
 
   async function renderSettings() {
     const settings = await CCApi.getSettings();
+    applyTheme(settings.theme || "default");
     $("#settingsProxyPort").value = settings.proxyPort;
     $("#settingsAdminPort").value = settings.adminPort;
     $("#autoStart").checked = settings.autoStart;
@@ -886,21 +1210,34 @@
     if (route === "settings") await renderSettings();
   }
 
-  let currentTheme = "light";
+  let currentTheme = "default";
+
+  function normalizeTheme(theme) {
+    if (!theme || theme === "light" || theme === "auto") return "default";
+    return availableThemes.includes(theme) ? theme : "default";
+  }
 
   function applyTheme(theme) {
     if (theme === "toggle") {
-      theme = currentTheme === "dark" ? "light" : "dark";
+      theme = currentTheme === "dark" ? "default" : "dark";
     }
-    currentTheme = theme;
-    const resolved = theme === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : theme === "auto" ? "light" : theme;
-    document.documentElement.setAttribute("data-bs-theme", resolved);
-    const icon = $(".theme-btn i");
-    if (icon) icon.className = resolved === "dark" ? "bi bi-sun-fill" : "bi bi-moon-stars-fill";
+    const normalized = normalizeTheme(theme);
+    currentTheme = normalized;
+    document.documentElement.setAttribute("data-bs-theme", normalized === "dark" ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme-palette", normalized);
+    $all(".theme-segment .btn").forEach((button) => {
+      const active = button.dataset.themeAction === normalized;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    const icon = $("[data-theme-action='toggle'] i");
+    if (icon) icon.className = normalized === "dark" ? "bi bi-sun-fill" : "bi bi-moon-stars-fill";
+    return normalized;
   }
 
   async function saveSettingsFromForm() {
     const settings = {
+      theme: currentTheme,
       proxyPort: Number($("#settingsProxyPort").value),
       adminPort: Number($("#settingsAdminPort").value),
       autoStart: $("#autoStart").checked,
@@ -977,6 +1314,31 @@
     return formatI18n("settings.ccswitchFound", { supported, unsupported });
   }
 
+  function translateCcSwitchReason(reason = "") {
+    const normalized = String(reason || "").trim();
+    if (!normalized) return "";
+    if (normalized === "没有发现 API 地址，可能是官方登录或空配置。") {
+      return t("settings.ccswitchReason.noBaseUrl");
+    }
+    if (normalized === "这是 CC-Switch 本机代理地址，不能作为上游 API 导入。") {
+      return t("settings.ccswitchReason.localProxy");
+    }
+    if (normalized === "没有发现 API Key。") {
+      return t("settings.ccswitchReason.noApiKey");
+    }
+    if (normalized === "OpenAI Chat 格式本轮不自动导入，避免转换兼容风险。") {
+      return t("settings.ccswitchReason.openaiChat");
+    }
+    if (normalized === "OpenAI Responses 格式暂未适配，暂不自动导入。") {
+      return t("settings.ccswitchReason.openaiResponses");
+    }
+    const unsupportedMatch = normalized.match(/^(.+?) 格式暂不支持自动导入。$/);
+    if (unsupportedMatch) {
+      return formatI18n("settings.ccswitchReason.unsupportedFormat", { format: unsupportedMatch[1] });
+    }
+    return normalized;
+  }
+
   function renderCcSwitchImportList(providers = ccSwitchCandidates, message = "") {
     const target = $("#ccSwitchImportList");
     if (!target) return;
@@ -990,16 +1352,17 @@
         const statusLabel = provider.supported ? t("settings.ccswitchSupported") : t("settings.ccswitchUnsupported");
         const statusIcon = provider.supported ? "bi-check2-circle" : "bi-slash-circle";
         const model = provider.models?.default || provider.models?.sonnet || "";
+        const translatedReason = translateCcSwitchReason(provider.reason);
         return `
           <article class="ccswitch-import-item ${provider.supported ? "supported" : "unsupported"}">
             <div>
               <strong>${escapeHtml(provider.name)}</strong>
-              <span class="truncate">${escapeHtml(provider.baseUrl || provider.reason || provider.apiFormat)}</span>
+              <span class="truncate">${escapeHtml(provider.baseUrl || translatedReason || provider.apiFormat)}</span>
               ${model ? `<small>${escapeHtml(model)}</small>` : ""}
             </div>
             <span class="ccswitch-import-secret">${escapeHtml(provider.hasApiKey ? provider.apiKeyPreview : "")}</span>
             <span class="ccswitch-import-status"><i class="bi ${statusIcon}"></i>${escapeHtml(statusLabel)}</span>
-            ${provider.reason ? `<p>${escapeHtml(provider.reason)}</p>` : ""}
+            ${translatedReason ? `<p>${escapeHtml(translatedReason)}</p>` : ""}
           </article>
         `;
       }).join("")}
@@ -1222,12 +1585,64 @@
           const result = editingProviderId && !hasTypedKey
             ? await CCApi.autofillProviderModels(editingProviderId)
             : await CCApi.fetchProviderModelsPayload(providerPayloadFromForm(false));
-          setProviderMappings(result.suggested || emptyMappings());
-          if (resultEl) resultEl.textContent = `${t("models.fetched")} ${(result.models || []).length}`;
+          providerAvailableModels = Array.isArray(result.models) ? result.models.slice() : [];
+          setProviderMappings(result.suggested || emptyMappings(), { availableModels: providerAvailableModels });
+          if (resultEl) resultEl.textContent = t("models.fetchSuccess");
           showToast(t("toast.modelsAutofilled"));
+        } catch (error) {
+          providerAvailableModels = [];
+          renderProviderMappings();
+          if (resultEl) resultEl.textContent = t("models.fetchFailedManual");
+          showToast(error.message || t("toast.requestFailed"));
         } finally {
           actionEl.disabled = false;
         }
+      }
+
+      if (action === "add-provider-model-row") {
+        addProviderMappingRow();
+      }
+
+      if (action === "remove-provider-model-row") {
+        removeProviderMappingRow(Number(actionEl.dataset.rowIndex));
+      }
+
+      if (action === "toggle-provider-model-slot-menu") {
+        toggleProviderSlotMenu(Number(actionEl.dataset.rowIndex));
+      }
+
+      if (action === "toggle-baseurl-menu") {
+        toggleBaseUrlMenu();
+      }
+
+      if (action === "select-baseurl-option") {
+        setBaseUrlValue(actionEl.dataset.baseurlValue || "");
+      }
+
+      if (action === "select-provider-model-slot") {
+        moveProviderMappingRow(Number(actionEl.dataset.rowIndex), actionEl.dataset.slotKey);
+        renderPresetOptions(selectedPreset, collectProviderMappings());
+      }
+
+      if (action === "toggle-provider-model-menu") {
+        toggleProviderModelMenu(actionEl.dataset.rowKey);
+      }
+
+      if (action === "select-provider-model-option") {
+        const rowKey = openProviderModelMenuKey;
+        if (rowKey) {
+          updateProviderModelInput(rowKey, actionEl.dataset.modelValue || "");
+          closeProviderModelMenu();
+          renderPresetOptions(selectedPreset, collectProviderMappings());
+        }
+      }
+
+      if (action === "toggle-auth-scheme-menu") {
+        toggleAuthSchemeMenu();
+      }
+
+      if (action === "select-auth-scheme") {
+        setAuthSchemeValue(actionEl.dataset.value);
       }
 
       if (action === "delete-provider") {
@@ -1444,11 +1859,22 @@
     window.addEventListener("hashchange", () => renderRoute(routeFromHash()));
     window.addEventListener("cc:i18n", () => renderRoute(routeFromHash()));
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
-      const activeTheme = $(".theme-segment .btn.active")?.dataset.themeAction || "light";
-      if (activeTheme === "auto") applyTheme("auto");
+      if (currentTheme === "dark") applyTheme("dark");
     });
 
     document.addEventListener("click", async (event) => {
+      if (!event.target.closest(".mapping-slot-menu-wrap")) {
+        closeProviderSlotMenu();
+      }
+      if (!event.target.closest(".baseurl-input-wrap")) {
+        closeBaseUrlMenu();
+      }
+      if (!event.target.closest(".provider-model-input-wrap")) {
+        closeProviderModelMenu();
+      }
+      if (!event.target.closest(".auth-scheme-menu-wrap")) {
+        closeAuthSchemeMenu();
+      }
       const langButton = event.target.closest("[data-lang]");
       if (langButton) CCI18n.apply(langButton.dataset.lang);
       const addLink = event.target.closest("a[href='#providers/add']");
@@ -1458,7 +1884,10 @@
         updatePresetSelection();
       }
       const themeButton = event.target.closest("[data-theme-action]");
-      if (themeButton) applyTheme(themeButton.dataset.themeAction);
+      if (themeButton) {
+        const nextTheme = applyTheme(themeButton.dataset.themeAction);
+        await CCApi.saveSettings({ theme: nextTheme });
+      }
       const formatButton = event.target.closest("[data-api-format]");
       if (formatButton) {
         event.preventDefault();
@@ -1478,6 +1907,35 @@
         return;
       }
       await handleAction(event.target);
+    });
+
+    document.addEventListener("change", (event) => {
+      const mappingInput = event.target.closest("[data-provider-model-input]");
+      if (mappingInput) {
+        updateProviderModelInput(mappingInput.dataset.providerModelInput, mappingInput.value);
+        renderPresetOptions(selectedPreset, collectProviderMappings());
+      }
+      if (event.target.id === "providerBaseUrl") {
+        renderBaseUrlOptions();
+      }
+    });
+
+    document.addEventListener("input", (event) => {
+      if (event.target.id === "providerBaseUrl") {
+        renderBaseUrlOptions();
+      }
+      const mappingInput = event.target.closest("[data-provider-model-input]");
+      if (!mappingInput) return;
+      updateProviderModelInput(mappingInput.dataset.providerModelInput, mappingInput.value);
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeBaseUrlMenu();
+        closeProviderSlotMenu();
+        closeProviderModelMenu();
+        closeAuthSchemeMenu();
+      }
     });
 
     $("#providerForm").addEventListener("submit", async (event) => {
@@ -1537,7 +1995,9 @@
     });
     toast = new bootstrap.Toast($("#appToast"), { delay: 2200 });
     bindEvents();
-    CCI18n.apply("zh");
+    const settings = await CCApi.getSettings();
+    CCI18n.apply(settings.language || "zh");
+    applyTheme(settings.theme || "default");
     if (!window.location.hash) window.location.hash = "dashboard";
     await renderRoute(routeFromHash());
   });

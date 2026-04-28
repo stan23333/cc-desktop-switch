@@ -15,13 +15,13 @@
 普通用户推荐下载 Release 里的安装版：
 
 ```text
-CC-Desktop-Switch-v1.0.13-Windows-Setup.exe
+CC-Desktop-Switch-v<最新版本>-Windows-Setup.exe
 ```
 
 也可以使用便携版：
 
 ```text
-CC-Desktop-Switch-v1.0.13-Windows-Portable.zip
+CC-Desktop-Switch-v<最新版本>-Windows-Portable.zip
 ```
 
 macOS 版本由 macOS 维护者单独同步。如果 Release 页面出现对应的 DMG 或 PKG，DMG 打开后把应用拖到“应用程序”；PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。

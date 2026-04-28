@@ -22,6 +22,8 @@
     deepseek: { logo: 'assets/providers/deepseek.ico' },
     kimi: { logo: 'assets/providers/kimi.ico' },
     moonshot: { logo: 'assets/providers/kimi.ico' },
+    xiaomi: { logo: 'assets/providers/xiaomi-mimo.png' },
+    mimo: { logo: 'assets/providers/xiaomi-mimo.png' },
     qiniu: { logo: 'assets/providers/qiniu.ico' },
     qnaigc: { logo: 'assets/providers/qiniu.ico' },
     zhipu: { logo: 'assets/providers/zhipu.png' },
@@ -56,10 +58,13 @@
       default: provider.id === activeId,
       isBuiltin: !!provider.isBuiltin,
       mappings: {
-        sonnet: models.sonnet || '',
-        haiku: models.haiku || '',
-        opus: models.opus || '',
-        default: models.default || models.sonnet || models.haiku || models.opus || '',
+        default: models.default || '',
+        opus_4_7: models.opus_4_7 || models.opus || '',
+        opus_4_6: models.opus_4_6 || '',
+        opus_3: models.opus_3 || '',
+        sonnet_4_6: models.sonnet_4_6 || models.sonnet || '',
+        sonnet_4_5: models.sonnet_4_5 || '',
+        haiku_4_5: models.haiku_4_5 || models.haiku || '',
       },
       ...computeIcon(provider),
     };
@@ -79,12 +84,7 @@
       body.apiKey = payload.apiKey;
     }
     if (includeModels) {
-      body.models = {
-        sonnet: payload.models?.sonnet || '',
-        haiku: payload.models?.haiku || '',
-        opus: payload.models?.opus || '',
-        default: payload.models?.default || '',
-      };
+      body.models = payload.models || {};
     }
     return body;
   }
@@ -132,6 +132,8 @@
         authScheme: p.authScheme || 'bearer',
         models: p.models || {},
         modelOptions: p.modelOptions || {},
+        baseUrlOptions: p.baseUrlOptions || [],
+        baseUrlHint: p.baseUrlHint || '',
         requestOptionPresets: p.requestOptionPresets || {},
         extraHeaders: p.extraHeaders || {},
         modelCapabilities: p.modelCapabilities || {},
