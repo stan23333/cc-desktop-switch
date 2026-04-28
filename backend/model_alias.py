@@ -80,6 +80,32 @@ def normalize_model_mappings(models: Optional[dict]) -> dict:
     return normalized
 
 
+def model_mappings_with_legacy_aliases(models: Optional[dict]) -> dict:
+    """在新槽位结构上补回旧四槽位别名，供兼容读取。"""
+    normalized = normalize_model_mappings(models)
+    compat = dict(normalized)
+    compat["default"] = normalized.get("default", "")
+    compat["sonnet"] = (
+        normalized.get("sonnet_4_6")
+        or normalized.get("sonnet_4_5")
+        or normalized.get("default")
+        or ""
+    )
+    compat["opus"] = (
+        normalized.get("opus_4_7")
+        or normalized.get("opus_4_6")
+        or normalized.get("opus_3")
+        or normalized.get("default")
+        or ""
+    )
+    compat["haiku"] = (
+        normalized.get("haiku_4_5")
+        or normalized.get("default")
+        or ""
+    )
+    return compat
+
+
 def provider_model_ids(provider: Optional[dict]) -> list[str]:
     """按稳定顺序返回 provider 暴露给 Claude 的真实模型 ID。"""
     if not provider:
@@ -175,4 +201,25 @@ def resolve_requested_model_slot(requested_model: str) -> Optional[str]:
     requested = str(requested_model or "").strip().lower()
     if not requested:
         return None
-    return CLAUDE_ID_TO_SLOT.get(requested)
+    mapped = CLAUDE_ID_TO_SLOT.get(requested)
+    if mapped:
+        return mapped
+
+    # 兼容旧版本 Claude 模型 ID 和未精确列出的家族命名。
+    if "haiku" in requested:
+        return "haiku"
+    if "sonnet" in requested:
+        if "4-6" in requested:
+            return "sonnet_4_6"
+        if "4-5" in requested:
+            return "sonnet_4_5"
+        return "sonnet"
+    if "opus" in requested:
+        if "4-7" in requested:
+            return "opus_4_7"
+        if "4-6" in requested:
+            return "opus_4_6"
+        if requested.startswith("claude-3") or "-3-" in requested or requested.endswith("-3"):
+            return "opus_3"
+        return "opus"
+    return None

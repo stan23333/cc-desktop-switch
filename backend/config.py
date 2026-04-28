@@ -8,7 +8,7 @@ import copy
 from datetime import datetime
 from typing import Optional
 
-from backend.model_alias import normalize_model_mappings
+from backend.model_alias import model_mappings_with_legacy_aliases, normalize_model_mappings
 
 CONFIG_DIR = os.path.expanduser("~/.cc-desktop-switch")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -200,21 +200,23 @@ def load_config() -> dict:
     """加载配置文件"""
     ensure_config_dir()
     if not os.path.exists(CONFIG_FILE):
-        return copy.deepcopy(DEFAULT_CONFIG)
+        return _config_with_legacy_model_aliases(copy.deepcopy(DEFAULT_CONFIG))
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            raw = json.load(f)
     except (json.JSONDecodeError, IOError):
-        return copy.deepcopy(DEFAULT_CONFIG)
+        return _config_with_legacy_model_aliases(copy.deepcopy(DEFAULT_CONFIG))
+    return _config_with_legacy_model_aliases(normalize_config(raw))
 
 
 def save_config(config: dict):
     """保存配置文件"""
     ensure_config_dir()
+    normalized = normalize_config(config)
     # 原子写入：先写临时文件，再重命名
     tmp_file = CONFIG_FILE + ".tmp"
     with open(tmp_file, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
+        json.dump(normalized, f, ensure_ascii=False, indent=2)
     shutil.move(tmp_file, CONFIG_FILE)
 
 
@@ -236,6 +238,34 @@ def _normalize_provider(provider: dict) -> dict:
     normalized.setdefault("sortIndex", 0)
     normalized["models"] = normalize_model_mappings(normalized.get("models"))
     return normalized
+
+
+def _provider_with_legacy_model_aliases(provider: dict) -> dict:
+    compat = copy.deepcopy(provider)
+    compat["models"] = model_mappings_with_legacy_aliases(compat.get("models"))
+    return compat
+
+
+def _config_with_legacy_model_aliases(config: dict) -> dict:
+    compat = copy.deepcopy(config)
+    providers = compat.get("providers", [])
+    if isinstance(providers, list):
+        compat["providers"] = [
+            _provider_with_legacy_model_aliases(provider)
+            if isinstance(provider, dict) else provider
+            for provider in providers
+        ]
+    return compat
+
+
+def _preset_with_legacy_model_aliases(preset: dict) -> dict:
+    compat = _provider_with_legacy_model_aliases(_normalize_provider(copy.deepcopy(preset)))
+    model_options = compat.get("modelOptions")
+    if isinstance(model_options, dict):
+        for option in model_options.values():
+            if isinstance(option, dict) and isinstance(option.get("models"), dict):
+                option["models"] = model_mappings_with_legacy_aliases(option.get("models"))
+    return compat
 
 
 def normalize_config(config: dict) -> dict:
@@ -407,7 +437,7 @@ def add_provider(provider: dict) -> dict:
         config["activeProvider"] = provider["id"]
 
     save_config(config)
-    return provider
+    return _provider_with_legacy_model_aliases(provider)
 
 
 def update_provider(provider_id: str, data: dict) -> Optional[dict]:
@@ -441,7 +471,7 @@ def update_provider(provider_id: str, data: dict) -> Optional[dict]:
 
             config["providers"][i] = updated
             save_config(config)
-            return updated
+            return _provider_with_legacy_model_aliases(updated)
     return None
 
 
@@ -537,4 +567,4 @@ def update_settings(settings: dict) -> dict:
 
 def get_presets() -> list:
     """获取内置预设列表"""
-    return BUILTIN_PRESETS
+    return [_preset_with_legacy_model_aliases(preset) for preset in BUILTIN_PRESETS]

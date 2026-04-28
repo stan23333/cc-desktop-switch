@@ -18,7 +18,7 @@ from backend.api_adapters import (
 )
 from backend.model_alias import (
     all_provider_model_entries,
-    normalize_model_mappings,
+    model_mappings_with_legacy_aliases,
     provider_model_ids as alias_provider_model_ids,
     resolve_model_alias,
     resolve_requested_model_slot,
@@ -126,7 +126,7 @@ def map_model(original_model: str, provider: Optional[dict]) -> str:
     if not provider or not original_model:
         return original_model
 
-    models_config = normalize_model_mappings(provider.get("models", {}))
+    models_config = model_mappings_with_legacy_aliases(provider.get("models", {}))
     if not models_config:
         return original_model
 

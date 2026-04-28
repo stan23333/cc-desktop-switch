@@ -1351,7 +1351,7 @@
       ${providers.map((provider) => {
         const statusLabel = provider.supported ? t("settings.ccswitchSupported") : t("settings.ccswitchUnsupported");
         const statusIcon = provider.supported ? "bi-check2-circle" : "bi-slash-circle";
-        const model = provider.models?.default || provider.models?.sonnet || "";
+        const model = provider.models?.default || provider.models?.sonnet_4_6 || provider.models?.sonnet || "";
         const translatedReason = translateCcSwitchReason(provider.reason);
         return `
           <article class="ccswitch-import-item ${provider.supported ? "supported" : "unsupported"}">
@@ -1656,7 +1656,17 @@
           mappings[input.dataset.modelInput] = input.value.trim();
         });
         const defaultKey = $("#defaultModel")?.value || "sonnet";
-        mappings.default = mappings[defaultKey] || mappings.sonnet || mappings.haiku || mappings.opus || "";
+        mappings.default = mappings[defaultKey]
+          || mappings.sonnet_4_6
+          || mappings.sonnet_4_5
+          || mappings.haiku_4_5
+          || mappings.opus_4_7
+          || mappings.opus_4_6
+          || mappings.opus_3
+          || mappings.sonnet
+          || mappings.haiku
+          || mappings.opus
+          || "";
         await CCApi.saveModelMappings($("#modelProvider").value, mappings);
         showToast(t("toast.modelsSaved"));
       }

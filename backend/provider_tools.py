@@ -141,6 +141,9 @@ def _pick_model(model_ids: list[str], keywords: tuple[str, ...], fallback_index:
     return model_ids[min(fallback_index, len(model_ids) - 1)]
 
 
+from backend.model_alias import model_mappings_with_legacy_aliases
+
+
 def suggest_model_mappings(model_ids: list[str]) -> dict:
     """根据模型名称给 Claude 默认槽位自动推荐映射。"""
     usable = _usable_model_ids(model_ids)
@@ -159,7 +162,7 @@ def suggest_model_mappings(model_ids: list[str]) -> dict:
         fallback_index=0,
     )
     default = sonnet or opus or haiku or (usable[0] if usable else "")
-    return {
+    return model_mappings_with_legacy_aliases({
         "default": default,
         "opus_4_7": opus or default,
         "opus_4_6": "",
@@ -167,7 +170,7 @@ def suggest_model_mappings(model_ids: list[str]) -> dict:
         "sonnet_4_6": sonnet or default,
         "sonnet_4_5": "",
         "haiku_4_5": haiku or default,
-    }
+    })
 
 
 async def fetch_provider_models(provider: dict) -> dict:
