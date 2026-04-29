@@ -1,6 +1,7 @@
 """本地代理服务 - 模型名翻译 + 请求转发 + SSE 流式处理"""
 
 import json
+import os
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -357,8 +358,12 @@ async def forward_request(
     log_buffer.add("INFO", f"转发请求 → {upstream_url}")
     log_buffer.add("INFO", f"模型: {body.get('model', '')} → {upstream_body.get('model', '')}")
 
+    proxy = _get_http_proxy()
+    if proxy:
+        log_buffer.add("INFO", f"使用上游代理: {proxy}")
+
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=120.0, proxy=proxy) as client:
             resp = await client.post(
                 upstream_url,
                 json=upstream_body,
@@ -401,12 +406,22 @@ async def forward_request(
     except httpx.TimeoutException:
         stats.record(False)
         log_buffer.add("ERROR", "请求超时")
-        return {"error": {"type": "timeout", "message": "上游 API 请求超时"}}
+        return {
+            "error": {
+                "type": "timeout",
+                "message": "上游 API 请求超时。若在中国大陆使用，请检查本地网络是否能稳定访问该 API 地址。",
+            }
+        }
     except Exception as e:
         stats.record(False)
         message = f"{e.__class__.__name__}: {str(e)}".rstrip()
         log_buffer.add("ERROR", f"请求失败: {message}")
-        return {"error": {"type": "connection_error", "message": message}}
+        return {
+            "error": {
+                "type": "connection_error",
+                "message": f"连接上游 API 失败: {message}。请检查网络连接和 API 地址是否正确。",
+            }
+        }
 
 
 async def forward_request_stream(
@@ -431,8 +446,12 @@ async def forward_request_stream(
 
     log_buffer.add("INFO", f"流式请求 → {upstream_url}")
 
+    proxy = _get_http_proxy()
+    if proxy:
+        log_buffer.add("INFO", f"使用上游代理: {proxy}")
+
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=300.0, proxy=proxy) as client:
             async with client.stream(
                 "POST",
                 upstream_url,
@@ -492,15 +511,29 @@ async def forward_request_stream(
                 stats.record(True)
                 log_buffer.add("SUCCESS", f"流式完成")
 
+    except httpx.TimeoutException:
+        stats.record(False)
+        log_buffer.add("ERROR", "流式请求超时")
+        error_event = {
+            "type": "error",
+            "error": {
+                "type": "timeout",
+                "message": "上游 API 流式请求超时。若在中国大陆使用，请检查本地网络是否能稳定访问该 API 地址。",
+            },
+        }
+        yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
     except Exception as e:
         stats.record(False)
         message = f"{e.__class__.__name__}: {str(e)}".rstrip()
         log_buffer.add("ERROR", f"流式请求失败: {message}")
         error_event = {
             "type": "error",
-            "error": {"message": message},
+            "error": {
+                "type": "connection_error",
+                "message": f"连接上游 API 失败: {message}。请检查网络连接和 API 地址是否正确。",
+            },
         }
-        yield f"data: {json.dumps(error_event)}\n\n"
+        yield f"event: error\ndata: {json.dumps(error_event, ensure_ascii=False)}\n\n"
 
 
 def _openai_to_anthropic(openai_resp: dict, model: str) -> dict:
@@ -518,9 +551,29 @@ def _openai_chunk_to_anthropic(chunk: dict, model: str) -> dict:
 from backend.config import get_active_provider, get_gateway_api_key, get_providers, get_settings
 
 
+def _get_http_proxy() -> Optional[str]:
+    """获取用户配置的上游代理地址，优先读取设置中的 upstreamProxy，
+    其次回退到系统环境变量 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY。"""
+    settings = get_settings()
+    if not settings.get("upstreamProxyEnabled", True):
+        return None
+    configured = str(settings.get("upstreamProxy") or "").strip()
+    if configured:
+        # 允许用户只写 host:port，自动补全 http:// 前缀
+        if "://" not in configured:
+            configured = f"http://{configured}"
+        return configured
+    # 回退到环境变量（httpx 默认行为，但这里显式读取便于日志展示）
+    for env in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"):
+        val = os.environ.get(env, os.environ.get(env.lower(), "")).strip()
+        if val:
+            return val
+    return None
+
+
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.14")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.15")
 
     def upstream_error_status(result: dict) -> int:
         """把上游错误转换成 HTTP 错误状态，避免桌面端按成功响应解析。"""
@@ -617,6 +670,15 @@ def create_proxy_app() -> FastAPI:
 
         log_buffer.add("INFO", f"请求: POST /v1/messages")
         log_buffer.add("INFO", f"模型映射: {original_model} → {mapped_model}")
+
+        # 检测 tools 使用场景，给出友好提示
+        if body.get("tools") and _provider_kind(provider) == "deepseek":
+            log_buffer.add(
+                "WARNING",
+                "请求包含 tools，但 DeepSeek Anthropic 兼容接口当前不支持工具调用（Tools/MCP）。"
+                "如果后续出现搜索外网或访问 GitHub 失败，属于 Claude Desktop 本地工具调用的网络问题，"
+                "与 DeepSeek API 无关。建议检查本地网络环境或关闭相关工具。",
+            )
 
         # 判断是否流式
         is_stream = body.get("stream", False)

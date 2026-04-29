@@ -945,6 +945,51 @@ label[for],
   border-color: rgba(251, 146, 60, .34);
 }
 
+.global-health-banner {
+  padding: 5px 16px;
+  background: #fff7ed;
+  border-bottom: 1px solid #fed7aa;
+  color: #9a3412;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.global-health-banner[hidden] {
+  display: none;
+}
+
+.global-health-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.global-health-inner > i {
+  color: #f97316;
+  font-size: 12px;
+}
+
+.global-health-inner > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.global-health-inner button {
+  padding: 2px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+[data-bs-theme="dark"] .global-health-banner {
+  background: rgba(251, 146, 60, .12);
+  border-color: rgba(251, 146, 60, .34);
+  color: #fdba74;
+}
+
 .config-list {
   margin-bottom: 22px;
   border: 1px solid var(--line);
@@ -2328,6 +2373,25 @@ body {
   gap: 12px;
 }
 
+.mapping-check-alert-wrap {
+  min-height: 0;
+}
+
+.mapping-check-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+.mapping-check-alert .btn-close {
+  padding: 8px;
+  margin-left: auto;
+}
+
 .provider-mapping-card {
   padding: 16px;
   border: 1px solid var(--line);
@@ -2361,8 +2425,7 @@ body {
 
 .mapping-select-wrap {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
 }
 
@@ -2525,18 +2588,25 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: 8px;
   padding-top: 1px;
 }
 
+.mapping-check-button,
 .mapping-remove-button {
-  min-width: 72px;
+  min-width: 56px;
   min-height: 42px;
   border-radius: 12px;
 }
 
+.mapping-check-button {
+  padding-inline: 10px;
+}
+
+.mapping-check-placeholder,
 .mapping-remove-placeholder {
   display: block;
-  min-width: 72px;
+  min-width: 56px;
   min-height: 42px;
 }
 
@@ -2865,6 +2935,22 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.settings-label-with-switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-label-with-switch .form-switch {
+  margin-bottom: 0;
+}
+
+.settings-label-with-switch .form-check-input {
+  width: 2.4em;
+  height: 1.2em;
+  cursor: pointer;
 }
 
 .inline-actions {

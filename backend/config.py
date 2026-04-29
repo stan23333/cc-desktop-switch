@@ -16,7 +16,7 @@ BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
 DEFAULT_UPDATE_URL = "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
 
 DEFAULT_CONFIG = {
-    "version": "1.0.14",
+    "version": "1.0.15",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],
@@ -28,6 +28,8 @@ DEFAULT_CONFIG = {
         "autoStart": False,
         "exposeAllProviderModels": False,
         "updateUrl": DEFAULT_UPDATE_URL,
+        "upstreamProxy": "",
+        "upstreamProxyEnabled": False,
     },
 }
 
@@ -125,15 +127,19 @@ BUILTIN_PRESETS = [
         "apiFormat": "anthropic",
         "baseUrlOptions": [
             {
-                "label": "官方默认",
+                "label": "中国集群",
                 "value": "https://token-plan-cn.xiaomimimo.com/anthropic",
             },
             {
-                "label": "活动专属",
+                "label": "新加坡集群",
                 "value": "https://token-plan-sgp.xiaomimimo.com/anthropic",
             },
+            {
+                "label": "欧洲集群",
+                "value": "https://token-plan-ams.xiaomimimo.com/anthropic",
+            },
         ],
-        "baseUrlHint": "如果是活动赠送会员请使用活动专属 Base URL，若仍无法获取模型请访问 https://platform.xiaomimimo.com/console/plan-manage 获取专属Base URL。",
+        "baseUrlHint": "请使用账号所属地区的 Base URL，若不清楚请访问 https://platform.xiaomimimo.com/console/plan-manage 获取专属Base URL。",
         "models": {
             "sonnet": "",
             "haiku": "",

@@ -268,6 +268,16 @@
       return data.settings || data;
     },
 
+    async detectLocalProxy() {
+      const data = await api('GET', '/api/proxy/detect');
+      return data.detected || "";
+    },
+
+    async checkModelAvailability(providerId, model) {
+      const data = await api('POST', `/api/providers/${encodeURIComponent(providerId)}/models/${encodeURIComponent(model)}/check`);
+      return data;
+    },
+
     async checkUpdate(updateUrl) {
       const params = new URLSearchParams();
       if (updateUrl) params.set('url', updateUrl);

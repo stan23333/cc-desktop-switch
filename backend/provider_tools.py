@@ -368,3 +368,55 @@ async def query_provider_usage(provider: dict) -> dict:
         "items": items,
         "message": "查询完成" if items else "余额接口响应中未识别到余额字段",
     }
+
+
+async def check_model_available(provider: dict, model: str) -> dict:
+    """通过最小对话请求检测模型是否可用。
+
+    发送一个极小的 chat completion 请求，根据 HTTP 状态码和响应体判断模型是否可用。
+    不消费有效 token（max_tokens=1，内容极短，多数提供商不计费或费用可忽略）。
+    """
+    api_format = normalize_api_format(provider.get("apiFormat", "anthropic"))
+    headers = get_upstream_headers(provider)
+    url = build_upstream_url(provider.get("baseUrl", ""), api_format)
+
+    if api_format == "openai_chat":
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+            "stream": False,
+        }
+    else:
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+            "stream": False,
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            resp = await client.post(url, json=body, headers=headers)
+
+        if resp.is_success:
+            return {"available": True, "message": "模型响应正常"}
+
+        try:
+            error_data = resp.json()
+            error_msg = (
+                error_data.get("error", {}).get("message", "")
+                or error_data.get("message", "")
+                or resp.text[:200]
+            )
+        except ValueError:
+            error_msg = resp.text[:200] or f"HTTP {resp.status_code}"
+
+        return {"available": False, "message": error_msg or f"HTTP {resp.status_code}"}
+
+    except httpx.TimeoutException:
+        return {"available": False, "message": "请求超时"}
+    except httpx.ConnectError:
+        return {"available": False, "message": "连接失败，请检查网络"}
+    except Exception as e:
+        return {"available": False, "message": f"{e.__class__.__name__}: {str(e)[:200]}"}

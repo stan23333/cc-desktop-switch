@@ -1,7 +1,9 @@
 """FastAPI 应用 - 管理 API + 静态文件服务"""
 
+import asyncio
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -182,11 +184,17 @@ def _desktop_health(
             "message": "Claude 桌面版仍指向旧地址，请重新一键应用到 Claude 桌面版。",
         })
 
-    if desktop_status.get("configured") is False and keys:
-        issues.append({
-            "code": "not_managed_by_ccds",
-            "message": "当前桌面版配置不是由本工具最新版本写入。",
-        })
+    if desktop_status.get("configured") is False:
+        if keys:
+            issues.append({
+                "code": "not_managed_by_ccds",
+                "message": "当前桌面版配置不是由本工具最新版本写入。",
+            })
+        else:
+            issues.append({
+                "code": "desktop_not_configured",
+                "message": "桌面版尚未配置，请添加提供商并一键应用到 Claude 桌面版。",
+            })
 
     inference_models = _parse_inference_models(str(keys.get("inferenceModels") or ""))
     target_models = (
@@ -394,9 +402,47 @@ def _provider_compatibility(provider: dict) -> dict:
     }
 
 
+async def _detect_local_proxy() -> Optional[str]:
+    """尝试自动检测本地代理端口。先检查环境变量，再扫描常见端口。"""
+    # 1. 优先读取环境变量
+    for env in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"):
+        val = os.environ.get(env, os.environ.get(env.lower(), "")).strip()
+        if val:
+            return val
+
+    # 2. 扫描常见本地代理端口
+    common_ports = [
+        7890,   # Clash / ClashX / Clash Verge (HTTP)
+        7897,   # Clash Verge Rev
+        7891,   # Clash (SOCKS，部分版本同时开 HTTP)
+        6152,   # Surge (HTTP)
+        6153,   # Surge (SOCKS)
+        1080,   # Shadowsocks / SSR / v2rayN (SOCKS)
+        10808,  # v2rayN (SOCKS)
+        10809,  # v2rayN (HTTP)
+        1082,   # Shadowrocket
+        8118,   # Privoxy
+        8888,   # Fiddler / Charles
+        8889,   # Surge Mac
+    ]
+
+    for port in common_ports:
+        try:
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", port),
+                timeout=1.0,
+            )
+            writer.close()
+            await writer.wait_closed()
+            return f"http://127.0.0.1:{port}"
+        except (OSError, asyncio.TimeoutError):
+            continue
+    return None
+
+
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.14")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.15")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
@@ -501,6 +547,18 @@ def create_admin_app() -> FastAPI:
             status_code=404,
             content={"success": False, "message": "提供商不存在"},
         )
+
+    @app.post("/api/providers/{provider_id}/models/{model}/check")
+    async def check_provider_model(provider_id: str, model: str):
+        """检测指定模型是否可用（通过最小对话请求）"""
+        provider = cfg.get_provider(provider_id)
+        if not provider:
+            return JSONResponse(
+                status_code=404,
+                content={"success": False, "message": "提供商不存在"},
+            )
+        result = await provider_tools.check_model_available(provider, model)
+        return {"success": True, **result}
 
     @app.delete("/api/providers/{provider_id}")
     async def remove_provider(provider_id: str):
@@ -814,6 +872,12 @@ def create_admin_app() -> FastAPI:
         data = await request.json()
         settings = cfg.update_settings(data)
         return {"success": True, "settings": settings}
+
+    @app.get("/api/proxy/detect")
+    async def detect_local_proxy():
+        """自动检测本地代理端口"""
+        detected = await _detect_local_proxy()
+        return {"detected": detected or ""}
 
     @app.get("/api/update/check")
     async def check_update(url: Optional[str] = None, current: Optional[str] = None, platform: Optional[str] = None):

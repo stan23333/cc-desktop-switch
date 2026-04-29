@@ -57,6 +57,26 @@
     toast.show();
   }
 
+  let _mappingAlertTimer = null;
+  function showMappingCheckAlert(model, available, message) {
+    const wrap = $("#mappingCheckAlertWrap");
+    if (!wrap) return;
+    const alertClass = available ? "alert-success" : "alert-danger";
+    const iconClass = available ? "bi-check-circle-fill" : "bi-x-circle-fill";
+    const title = available ? t("toast.modelAvailable") : t("toast.modelUnavailable");
+    wrap.innerHTML = `
+      <div class="alert ${alertClass} mapping-check-alert alert-dismissible fade show" role="alert">
+        <i class="bi ${iconClass}"></i>
+        <strong>${escapeHtml(model)}</strong> ${escapeHtml(title)}：${escapeHtml(message)}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+    `;
+    if (_mappingAlertTimer) clearTimeout(_mappingAlertTimer);
+    _mappingAlertTimer = setTimeout(() => {
+      wrap.innerHTML = "";
+    }, 5000);
+  }
+
   function restartReminderDismissed() {
     try {
       return localStorage.getItem(restartReminderStorageKey) === "1";
@@ -165,6 +185,15 @@
     warning.hidden = !message;
     const text = $("span", warning);
     if (text) text.textContent = message;
+  }
+
+  function renderGlobalHealthBanner(health) {
+    const banner = $("#globalHealthBanner");
+    const message = $("#globalHealthMessage");
+    if (!banner || !message) return;
+    const msg = firstHealthMessage(health);
+    banner.hidden = !msg;
+    message.textContent = msg;
   }
 
   function renderUpdateBadge(result) {
@@ -503,12 +532,12 @@
       const slot = slotByKey(rowKey);
       const isRequired = rowKey === "default";
       const currentProviderModel = providerFormMappings[rowKey] || "";
+      const canCheck = !!currentProviderModel && !!editingProviderId;
       return `
         <article class="form-mapping-row">
           <div class="form-mapping-left">
             <label class="form-label visually-hidden" for="providerMappingSlot-${index}">${t("providersAdd.claudeModel")}</label>
             <div class="mapping-select-wrap">
-              <span class="mapping-icon ${slot.iconClass}"><i class="bi ${slot.icon}"></i></span>
               ${slotMenuMarkup(rowKey, index)}
             </div>
           </div>
@@ -543,9 +572,12 @@
             </div>
           </div>
           <div class="form-mapping-actions">
+            ${canCheck
+              ? `<button class="btn btn-outline-primary btn-sm mapping-check-button" type="button" data-action="check-model" data-row-key="${escapeHtml(rowKey)}" aria-label="${escapeHtml(t("providersAdd.checkModel"))}">${escapeHtml(t("providersAdd.checkModel"))}</button>`
+              : '<span class="mapping-check-placeholder" aria-hidden="true"></span>'}
             ${isRequired
               ? '<span class="mapping-remove-placeholder" aria-hidden="true"></span>'
-              : `<button class="btn btn-outline-secondary btn-sm mapping-remove-button" type="button" data-action="remove-provider-model-row" data-row-index="${index}" aria-label="${escapeHtml(t("providersAdd.removeMapping"))}">${escapeHtml(t("providersAdd.removeMapping"))}</button>`}
+              : `<button class="btn btn-outline-danger btn-sm mapping-remove-button" type="button" data-action="remove-provider-model-row" data-row-index="${index}" aria-label="${escapeHtml(t("providersAdd.removeMapping"))}">${escapeHtml(t("providersAdd.removeMapping"))}</button>`}
           </div>
         </article>
       `;
@@ -939,7 +971,8 @@
     desktopStatus.textContent = health.needsApply
       ? t("status.needsApply")
       : status.desktopConfigured ? t("status.configured") : t("status.notConfigured");
-    renderDesktopHealthWarning("#dashboardDesktopWarning", health);
+    renderGlobalHealthBanner(health);
+    renderDesktopHealthWarning("#dashboardDesktopWarning", { issues: [] });
     $("#dashboardProxyStatus").textContent = status.proxyRunning ? `${t("status.running")} :${status.proxyPort}` : t("status.stopped");
     $("#dashboardProviderName").textContent = status.activeProvider.name;
     $("#activityList").innerHTML = activities.map((item) => (
@@ -1153,7 +1186,8 @@
       : desktop.configured ? t("status.configured") : t("status.notConfigured");
     statusText.classList.toggle("muted-text", !desktopReady);
     $(".desktop-card .circle-check")?.classList.toggle("warning", !desktopReady);
-    renderDesktopHealthWarning("#desktopPageWarning", health);
+    renderGlobalHealthBanner(health);
+    renderDesktopHealthWarning("#desktopPageWarning", { issues: [] });
     $("#desktopConfigList").innerHTML = entries.map(([key, value]) => `
       <div class="config-row"><i class="bi bi-check-circle-fill"></i><span>${escapeHtml(key)}:</span><code>${escapeHtml(Array.isArray(value) ? JSON.stringify(value) : value)}</code></div>
     `).join("");
@@ -1191,6 +1225,8 @@
     $("#autoStart").checked = settings.autoStart;
     $("#exposeAllProviderModels").checked = !!settings.exposeAllProviderModels;
     $("#settingsUpdateUrl").value = settings.updateUrl || "";
+    $("#settingsUpstreamProxy").value = settings.upstreamProxy || "";
+    $("#settingsUpstreamProxyEnabled").checked = settings.upstreamProxyEnabled !== false;
     renderModelMenuModeState(settings);
     await refreshBackupList();
     await refreshCcSwitchImportStatus();
@@ -1243,6 +1279,8 @@
       autoStart: $("#autoStart").checked,
       exposeAllProviderModels: $("#exposeAllProviderModels")?.checked || false,
       updateUrl: $("#settingsUpdateUrl").value.trim(),
+      upstreamProxy: $("#settingsUpstreamProxy").value.trim(),
+      upstreamProxyEnabled: $("#settingsUpstreamProxyEnabled").checked,
     };
     await CCApi.saveSettings(settings);
     $("#proxyPort").value = settings.proxyPort;
@@ -1469,6 +1507,24 @@
     }
   }
 
+  async function reapplyDesktopConfig(actionEl) {
+    if (!window.confirm(t("confirm.providerApplyDesktop"))) return;
+    actionEl.disabled = true;
+    try {
+      await CCApi.configureDesktop();
+      showToast(t("toast.providerAppliedDesktop"));
+      showRestartReminder();
+      const route = routeFromHash();
+      if (route === "dashboard") await renderDashboard();
+      if (route === "desktop") await renderDesktop();
+    } catch (error) {
+      console.error(error);
+      showToast(error.message || t("toast.requestFailed"));
+    } finally {
+      actionEl.disabled = false;
+    }
+  }
+
   async function handleAction(target) {
     const action = target.closest("[data-action]")?.dataset.action;
     if (!action) return;
@@ -1605,6 +1661,23 @@
 
       if (action === "remove-provider-model-row") {
         removeProviderMappingRow(Number(actionEl.dataset.rowIndex));
+      }
+
+      if (action === "check-model") {
+        const rowKey = actionEl.dataset.rowKey;
+        const model = providerFormMappings[rowKey] || "";
+        if (!model || !editingProviderId) return;
+        actionEl.disabled = true;
+        actionEl.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
+        try {
+          const result = await CCApi.checkModelAvailability(editingProviderId, model);
+          showMappingCheckAlert(model, result.available, result.message);
+        } catch (error) {
+          showMappingCheckAlert(model, false, error.message || t("toast.requestFailed"));
+        } finally {
+          actionEl.disabled = false;
+          actionEl.innerHTML = escapeHtml(t("providersAdd.checkModel"));
+        }
       }
 
       if (action === "toggle-provider-model-slot-menu") {
@@ -1759,6 +1832,22 @@
         }
       }
 
+      if (action === "detect-proxy") {
+        actionEl.disabled = true;
+        try {
+          const detected = await CCApi.detectLocalProxy();
+          if (detected) {
+            $("#settingsUpstreamProxy").value = detected;
+            await saveSettingsFromForm();
+            showToast(t("toast.proxyDetected"));
+          } else {
+            showToast(t("toast.proxyNotDetected"));
+          }
+        } finally {
+          actionEl.disabled = false;
+        }
+      }
+
       if (action === "check-update") {
         const result = await CCApi.checkUpdate($("#settingsUpdateUrl").value.trim());
         updateCheckCache = result;
@@ -1850,6 +1939,10 @@
 
       if (action === "apply-provider-desktop") {
         await applyProviderToDesktop(actionEl);
+      }
+
+      if (action === "reapply-desktop") {
+        await reapplyDesktopConfig(actionEl);
       }
     } catch (error) {
       console.error(error);
@@ -1971,6 +2064,7 @@
     $("#settingsProxyPort").addEventListener("change", saveSettingsFromForm);
     $("#settingsAdminPort").addEventListener("change", saveSettingsFromForm);
     $("#settingsUpdateUrl").addEventListener("change", saveSettingsFromForm);
+    $("#settingsUpstreamProxy").addEventListener("change", saveSettingsFromForm);
     $("#autoStart").addEventListener("change", saveSettingsFromForm);
     $("#exposeAllProviderModels").addEventListener("change", saveSettingsFromForm);
     $("#configImportFile")?.addEventListener("change", (event) => {
