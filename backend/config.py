@@ -16,7 +16,7 @@ BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
 DEFAULT_UPDATE_URL = "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
 
 DEFAULT_CONFIG = {
-    "version": "1.0.15",
+    "version": "1.0.16",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],
@@ -186,6 +186,20 @@ BUILTIN_PRESETS = [
         },
         "modelCapabilities": {},
         "requestOptions": {},
+        "isBuiltin": True,
+    },
+    {
+        "id": "bailian-token-plan",
+        "name": "阿里云百炼 (Token Plan)",
+        "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
+        "authScheme": "bearer",
+        "apiFormat": "anthropic",
+        "models": {
+            "sonnet": "",
+            "haiku": "",
+            "opus": "",
+            "default": "qwen3.6-plus",
+        },
         "isBuiltin": True,
     },
 ]
