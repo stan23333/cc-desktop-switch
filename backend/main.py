@@ -51,7 +51,11 @@ def _popen_hidden(command: list[str], *, detached: bool = False):
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         kwargs["startupinfo"] = startupinfo
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        if detached:
+            creationflags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+            creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        kwargs["creationflags"] = creationflags
     elif detached:
         kwargs["start_new_session"] = True
     return subprocess.Popen(command, **kwargs)
@@ -94,7 +98,7 @@ def _launch_update_installer(installer_path: str, platform: str) -> bool:
         return _schedule_update_quit_for_install(quit_handler)
 
     command = updater.install_command(installer_path, platform)
-    _popen_hidden(command)
+    _popen_hidden(command, detached=True)
     return False
 
 
