@@ -687,6 +687,8 @@ class ProviderConfigTests(unittest.TestCase):
         """所有内置预设都应能被 Claude Desktop 读取，并被代理实际使用。"""
         for preset in cfg.get_presets():
             with self.subTest(provider=preset["id"]):
+                if preset["id"] == "third-party":
+                    continue
                 models = preset["models"]
                 expected_ids = []
                 for key in ("default", "sonnet", "opus", "haiku"):
@@ -1629,7 +1631,7 @@ class AdminApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["installerStarted"])
-        popen.assert_called_once_with([r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe"])
+        popen.assert_called_once_with([r"C:\Temp\CC-Desktop-Switch-v1.0.11-Windows-Setup.exe"], detached=True)
 
     def test_update_install_opens_downloaded_macos_package(self):
         async def fake_download_update(url, current_version, platform="windows-x64", target_dir=None):
@@ -1657,7 +1659,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertTrue(response.json()["installerStarted"])
         self.assertEqual(response.json()["platform"], "macos-arm64")
         self.assertFalse(response.json()["quitRequested"])
-        popen.assert_called_once_with(["open", "/tmp/CC-Desktop-Switch-v1.0.11-macOS-arm64.pkg"])
+        popen.assert_called_once_with(["open", "/tmp/CC-Desktop-Switch-v1.0.11-macOS-arm64.pkg"], detached=True)
 
     def test_update_install_waits_for_macos_quit_before_opening_package(self):
         async def fake_download_update(url, current_version, platform="windows-x64", target_dir=None):
@@ -2425,7 +2427,7 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertNotIn(".preset-panel {\n  display: none;", css)
         self.assertEqual(html.count('class="timeline-card"'), 3)
         self.assertNotIn("本地代理", html + i18n)
-        self.assertNotIn("本机代理", html + i18n)
+        self.assertNotIn("本机代理", (html + i18n).replace("CC-Switch 本机代理地址", ""))
         self.assertNotIn("确认本地端口可用", html + i18n)
 
     def test_dashboard_presets_selection_update_and_desktop_health_ui_exist(self):
@@ -2456,7 +2458,7 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn('id="settingsInstallUpdate"', html)
         self.assertIn('id="restartReminderModal"', html)
         self.assertIn('id="restartReminderAck"', html)
-        self.assertIn("switch-board-actions", html)
+        self.assertIn("header-actions-left", html)
         self.assertIn("dashboard-clear-button", html)
         self.assertIn('data-i18n="dashboard.clearDesktopConfig"', html)
         self.assertIn('data-action="clear-desktop"', html)

@@ -39,6 +39,8 @@
   let updateCheckCache = null;
   let updateInstallPhase = "idle";
   let ccSwitchCandidates = [];
+  let proxyLogTimer = null;
+  let proxyLogInflight = false;
 
   function $(selector, root = document) {
     return root.querySelector(selector);
@@ -186,15 +188,6 @@
     warning.hidden = !message;
     const text = $("span", warning);
     if (text) text.textContent = message;
-  }
-
-  function renderGlobalHealthBanner(health) {
-    const banner = $("#globalHealthBanner");
-    const message = $("#globalHealthMessage");
-    if (!banner || !message) return;
-    const msg = firstHealthMessage(health);
-    banner.hidden = !msg;
-    message.textContent = msg;
   }
 
   function renderUpdateBadge(result) {
@@ -539,6 +532,7 @@
           <div class="form-mapping-left">
             <label class="form-label visually-hidden" for="providerMappingSlot-${index}">${t("providersAdd.claudeModel")}</label>
             <div class="mapping-select-wrap">
+              <span class="mapping-icon ${slot.iconClass}"><i class="bi ${slot.icon}"></i></span>
               ${slotMenuMarkup(rowKey, index)}
             </div>
           </div>
@@ -972,8 +966,7 @@
     desktopStatus.textContent = health.needsApply
       ? t("status.needsApply")
       : status.desktopConfigured ? t("status.configured") : t("status.notConfigured");
-    renderGlobalHealthBanner(health);
-    renderDesktopHealthWarning("#dashboardDesktopWarning", { issues: [] });
+    renderDesktopHealthWarning("#dashboardDesktopWarning", health);
     $("#dashboardProxyStatus").textContent = status.proxyRunning ? `${t("status.running")} :${status.proxyPort}` : t("status.stopped");
     $("#dashboardProviderName").textContent = status.activeProvider.name;
     $("#activityList").innerHTML = activities.map((item) => (
@@ -1253,35 +1246,69 @@
       : desktop.configured ? t("status.configured") : t("status.notConfigured");
     statusText.classList.toggle("muted-text", !desktopReady);
     $(".desktop-card .circle-check")?.classList.toggle("warning", !desktopReady);
-    renderGlobalHealthBanner(health);
-    renderDesktopHealthWarning("#desktopPageWarning", { issues: [] });
+    renderDesktopHealthWarning("#desktopPageWarning", health);
     $("#desktopConfigList").innerHTML = entries.map(([key, value]) => `
       <div class="config-row"><i class="bi bi-check-circle-fill"></i><span>${escapeHtml(key)}:</span><code>${escapeHtml(Array.isArray(value) ? JSON.stringify(value) : value)}</code></div>
     `).join("");
     $("#desktopJson").textContent = JSON.stringify(desktop.config, null, 2);
   }
 
+  async function refreshProxyLog() {
+    if (proxyLogInflight) return;
+    const logEl = $("#proxyLog");
+    if (!logEl) return;
+    proxyLogInflight = true;
+    try {
+      const [proxyStatus, logs] = await Promise.all([
+        CCApi.getProxyStatus(),
+        CCApi.getProxyLogs(),
+      ]);
+      logEl.innerHTML = logs.map((line) => `
+        <div class="log-line"><span>${escapeHtml(line.at)}</span><span class="log-level ${escapeHtml(line.level)}">${escapeHtml(line.level.toUpperCase())}</span><span>${escapeHtml(line.message)}</span></div>
+      `).join("");
+      if ($("#autoScroll")?.checked) logEl.scrollTop = logEl.scrollHeight;
+      const stats = [
+        { label: t("proxy.stats.total"), value: proxyStatus.stats.total, icon: "bi-list-ul" },
+        { label: t("proxy.stats.success"), value: proxyStatus.stats.success, icon: "bi-check-circle" },
+        { label: t("proxy.stats.failed"), value: proxyStatus.stats.failed, icon: "bi-x-circle", danger: true },
+        { label: t("proxy.stats.today"), value: proxyStatus.stats.today, icon: "bi-calendar3" },
+      ];
+      $("#proxyStats").innerHTML = stats.map((stat) => `
+        <article class="stat-card ${stat.danger ? "danger" : ""}"><i class="bi ${stat.icon}"></i><div><span>${stat.label}</span><strong>${stat.value}</strong></div></article>
+      `).join("");
+    } catch (error) {
+      console.warn(error);
+    } finally {
+      proxyLogInflight = false;
+    }
+  }
+
+  function stopProxyLogAutoRefresh() {
+    if (proxyLogTimer !== null) {
+      clearInterval(proxyLogTimer);
+      proxyLogTimer = null;
+    }
+  }
+
+  function startProxyLogAutoRefresh() {
+    stopProxyLogAutoRefresh();
+    proxyLogTimer = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      refreshProxyLog();
+    }, 2000);
+  }
+
   async function renderProxy() {
     const status = await CCApi.getStatus();
-    const proxyStatus = await CCApi.getProxyStatus();
-    const logs = await CCApi.getProxyLogs();
     $("#proxyPort").value = status.proxyPort;
     $("#settingsProxyPort").value = status.proxyPort;
     $("#proxyStateText").textContent = status.proxyRunning ? t("status.running") : t("status.stopped");
-    const logEl = $("#proxyLog");
-    logEl.innerHTML = logs.map((line) => `
-      <div class="log-line"><span>${escapeHtml(line.at)}</span><span class="log-level ${escapeHtml(line.level)}">${escapeHtml(line.level.toUpperCase())}</span><span>${escapeHtml(line.message)}</span></div>
-    `).join("");
-    if ($("#autoScroll").checked) logEl.scrollTop = logEl.scrollHeight;
-    const stats = [
-      { label: t("proxy.stats.total"), value: proxyStatus.stats.total, icon: "bi-list-ul" },
-      { label: t("proxy.stats.success"), value: proxyStatus.stats.success, icon: "bi-check-circle" },
-      { label: t("proxy.stats.failed"), value: proxyStatus.stats.failed, icon: "bi-x-circle", danger: true },
-      { label: t("proxy.stats.today"), value: proxyStatus.stats.today, icon: "bi-calendar3" },
-    ];
-    $("#proxyStats").innerHTML = stats.map((stat) => `
-      <article class="stat-card ${stat.danger ? "danger" : ""}"><i class="bi ${stat.icon}"></i><div><span>${stat.label}</span><strong>${stat.value}</strong></div></article>
-    `).join("");
+    await refreshProxyLog();
+    if (routeFromHash() === "proxy") {
+      startProxyLogAutoRefresh();
+    } else {
+      stopProxyLogAutoRefresh();
+    }
   }
 
   async function renderSettings() {
@@ -1305,6 +1332,7 @@
       const key = route.startsWith("providers") ? "providers" : route;
       tab.classList.toggle("active", tab.dataset.nav === key);
     });
+    if (route !== "proxy") stopProxyLogAutoRefresh();
     if (route === "dashboard") await renderDashboard();
     if (route === "providers/add") await renderProviderForm();
     if (route === "providers") await renderProviders();
@@ -1569,24 +1597,6 @@
       window.location.hash = "dashboard";
       showToast(t("toast.providerAppliedDesktop"));
       showRestartReminder();
-    } finally {
-      actionEl.disabled = false;
-    }
-  }
-
-  async function reapplyDesktopConfig(actionEl) {
-    if (!window.confirm(t("confirm.providerApplyDesktop"))) return;
-    actionEl.disabled = true;
-    try {
-      await CCApi.configureDesktop();
-      showToast(t("toast.providerAppliedDesktop"));
-      showRestartReminder();
-      const route = routeFromHash();
-      if (route === "dashboard") await renderDashboard();
-      if (route === "desktop") await renderDesktop();
-    } catch (error) {
-      console.error(error);
-      showToast(error.message || t("toast.requestFailed"));
     } finally {
       actionEl.disabled = false;
     }
@@ -2042,9 +2052,6 @@
         await handleDetectFormat();
       }
 
-      if (action === "reapply-desktop") {
-        await reapplyDesktopConfig(actionEl);
-      }
     } catch (error) {
       console.error(error);
       showToast(error.message || t("toast.requestFailed"));
