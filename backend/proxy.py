@@ -259,6 +259,18 @@ def apply_anthropic_request_options(upstream_body: dict, provider: dict) -> dict
     return upstream_body
 
 
+def _is_max_unsupported_error(status_code: int, error_text: str) -> bool:
+    """判断上游错误是否因为不支持 max/thinking/output_config 导致。"""
+    if status_code not in (400, 422):
+        return False
+    text = (error_text or "").lower()
+    keywords = [
+        "output_config", "thinking", "effort", "max",
+        "not supported", "unsupported", "invalid parameter",
+    ]
+    return any(kw in text for kw in keywords)
+
+
 def _normalize_usage(usage) -> dict:
     """保证 Anthropic usage 至少包含 input_tokens / output_tokens。"""
     def token_int(value) -> int:
@@ -377,11 +389,22 @@ async def forward_request(
         )
 
         if not resp.is_success:
+            error_text = resp.text[:500] or "上游 API 返回错误"
+            if _is_max_unsupported_error(resp.status_code, error_text):
+                return {
+                    "id": "msg_hint",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": body.get("model", ""),
+                    "content": [{"type": "text", "text": "该模型不支持 max，请取消勾选。"}],
+                    "stop_reason": "end_turn",
+                    "usage": {"input_tokens": 0, "output_tokens": 0},
+                }
             return {
                 "error": {
                     "type": "upstream_error",
                     "status": resp.status_code,
-                    "message": resp.text[:500] or "上游 API 返回错误",
+                    "message": error_text,
                 }
             }
 
@@ -467,6 +490,16 @@ async def forward_request_stream(
                 if not resp.is_success:
                     stats.record(False)
                     error_text = (await resp.aread()).decode("utf-8", errors="replace")[:500]
+                    if _is_max_unsupported_error(resp.status_code, error_text):
+                        model = body.get("model", "")
+                        hint = "该模型不支持 max，请取消勾选。"
+                        yield f'event: message_start\ndata: {{"type":"message_start","message":{{"id":"msg_hint","type":"message","role":"assistant","content":[],"model":"{model}","stop_reason":null,"stop_sequence":null,"usage":{{"input_tokens":0,"output_tokens":0}}}}}}\n\n'
+                        yield f'event: content_block_start\ndata: {{"type":"content_block_start","index":0,"content_block":{{"type":"text","text":""}}}}\n\n'
+                        yield f'event: content_block_delta\ndata: {{"type":"content_block_delta","index":0,"delta":{{"type":"text_delta","text":"{hint}"}}}}\n\n'
+                        yield f'event: content_block_stop\ndata: {{"type":"content_block_stop","index":0}}\n\n'
+                        yield f'event: message_delta\ndata: {{"type":"message_delta","delta":{{"stop_reason":"end_turn","stop_sequence":null}},"usage":{{"output_tokens":0}}}}\n\n'
+                        yield f'event: message_stop\ndata: {{"type":"message_stop"}}\n\n'
+                        return
                     error_event = {
                         "type": "error",
                         "error": {
@@ -573,7 +606,7 @@ def _get_http_proxy() -> Optional[str]:
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.16")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.17")
 
     def upstream_error_status(result: dict) -> int:
         """把上游错误转换成 HTTP 错误状态，避免桌面端按成功响应解析。"""

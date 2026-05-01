@@ -156,6 +156,10 @@
       return api('DELETE', `/api/providers/${encodeURIComponent(id)}`);
     },
 
+    async detectApiFormat(baseUrl, apiKey) {
+      return api('POST', '/api/providers/detect-format', { baseUrl, apiKey });
+    },
+
     async setDefaultProvider(id) {
       return api('PUT', `/api/providers/${encodeURIComponent(id)}/default`);
     },
@@ -286,6 +290,10 @@
 
     async installUpdate(updateUrl) {
       return api('POST', '/api/update/install', updateUrl ? { url: updateUrl } : {});
+    },
+
+    async getUpdateProgress() {
+      return api('GET', '/api/update/progress');
     },
 
     async createBackup() {

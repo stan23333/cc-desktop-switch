@@ -16,7 +16,7 @@ BACKUP_DIR = os.path.join(CONFIG_DIR, "backups")
 DEFAULT_UPDATE_URL = "https://github.com/lonr-6/cc-desktop-switch/releases/latest/download/latest.json"
 
 DEFAULT_CONFIG = {
-    "version": "1.0.16",
+    "version": "1.0.17",
     "activeProvider": None,
     "gatewayApiKey": None,
     "providers": [],
@@ -49,7 +49,7 @@ BUILTIN_PRESETS = [
         "modelOptions": {
             "deepseek_1m": {
                 "label": "解锁 1M 上下文",
-                "description": "用于 Claude Code/长上下文场景。开启后 Sonnet、Opus 和默认模型使用 deepseek-v4-pro[1m]。",
+                "description": "用于 Claude Code/长上下文场景。开启后 Sonnet、Opus 和默认模型使用 deepseek-v4-pro[1m]，Haiku/Flash 也会标记 1M 能力。",
                 "models": {
                     "sonnet": "deepseek-v4-pro[1m]",
                     "haiku": "deepseek-v4-flash",
@@ -58,6 +58,7 @@ BUILTIN_PRESETS = [
                 },
                 "modelCapabilities": {
                     "deepseek-v4-pro[1m]": {"supports1m": True},
+                    "deepseek-v4-flash": {"supports1m": True},
                 },
             }
         },
@@ -75,6 +76,46 @@ BUILTIN_PRESETS = [
             }
         },
         "extraHeaders": {"x-api-key": "{apiKey}"},
+        "isBuiltin": True,
+    },
+    {
+        "id": "third-party",
+        "name": "第三方模型",
+        "baseUrl": "",
+        "authScheme": "bearer",
+        "apiFormat": "anthropic",
+        "models": {
+            "sonnet": "",
+            "haiku": "",
+            "opus": "",
+            "default": "",
+        },
+        "modelOptions": {
+            "third_party_1m": {
+                "label": "解锁 1M 上下文",
+                "description": "用于 Claude Code/长上下文场景。开启后 Sonnet、Opus 和默认模型使用支持 1M 上下文的模型。",
+                "models": {
+                    "sonnet": "",
+                    "haiku": "",
+                    "opus": "",
+                    "default": "",
+                },
+                "modelCapabilities": {},
+            }
+        },
+        "requestOptions": {},
+        "requestOptionPresets": {
+            "third_party_max_effort": {
+                "label": "Max 思维",
+                "description": "Low：更快更省，适合简单任务。\nMedium：速度和效果平衡，适合日常使用。\nHigh：更认真思考，适合复杂代码和排错。\n勾选后：本工具会按 Max 思维转发；未勾选则使用 Claude 当前默认配置。",
+                "requestOptions": {
+                    "anthropic": {
+                        "thinking": {"type": "enabled"},
+                        "output_config": {"effort": "max"},
+                    }
+                },
+            }
+        },
         "isBuiltin": True,
     },
     {

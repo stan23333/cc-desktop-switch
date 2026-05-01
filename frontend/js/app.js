@@ -29,6 +29,7 @@
   let providerAvailableModels = [];
   let openProviderSlotMenuIndex = null;
   let openProviderModelMenuKey = null;
+  let protocolDetected = false;
   let baseUrlMenuOpen = false;
   let authSchemeMenuOpen = false;
   let editingProviderId = null;
@@ -1022,6 +1023,62 @@
     if (label) label.classList.toggle("required", input.required);
   }
 
+  function updateDetectFormatButton() {
+    const btn = $("#detectFormatBtn");
+    const status = $("#detectFormatStatus");
+    if (!btn) return;
+    const baseUrl = $("#providerBaseUrl")?.value.trim();
+    const apiKey = $("#providerApiKey")?.value.trim();
+    const canDetect = !!(baseUrl && apiKey);
+    btn.disabled = !canDetect;
+    if (status && !status.textContent) {
+      status.className = "detect-format-status";
+    }
+  }
+
+  function updateApplyButtonState() {
+    const applyBtn = $("[data-action='apply-provider-desktop']");
+    if (!applyBtn) return;
+    const isThirdParty = selectedPreset?.id === "third-party";
+    const canApply = !isThirdParty || protocolDetected;
+    applyBtn.disabled = !canApply;
+  }
+
+  async function handleDetectFormat() {
+    const btn = $("#detectFormatBtn");
+    const status = $("#detectFormatStatus");
+    if (!btn || !status) return;
+
+    const baseUrl = $("#providerBaseUrl")?.value.trim();
+    const apiKey = $("#providerApiKey")?.value.trim();
+    if (!baseUrl || !apiKey) return;
+
+    btn.disabled = true;
+    status.textContent = "探测中...";
+    status.className = "detect-format-status";
+
+    try {
+      const result = await CCApi.detectApiFormat(baseUrl, apiKey);
+      if (result.success) {
+        const fmt = result.apiFormat === "openai_responses" ? "openai_chat" : result.apiFormat;
+        setFormApiFormat(fmt);
+        const fmtLabel = fmt === "anthropic" ? "Anthropic 兼容" : fmt === "openai_chat" ? "OpenAI Chat" : "OpenAI Responses";
+        status.textContent = `已识别: ${fmtLabel}`;
+        status.className = "detect-format-status success";
+        protocolDetected = true;
+        updateApplyButtonState();
+      } else {
+        status.textContent = result.message || "探测失败";
+        status.className = "detect-format-status error";
+      }
+    } catch (error) {
+      status.textContent = error.message || "探测失败";
+      status.className = "detect-format-status error";
+    } finally {
+      updateDetectFormatButton();
+    }
+  }
+
   function resetProviderForm() {
     editingProviderId = null;
     selectedPreset = null;
@@ -1031,6 +1088,7 @@
     updatePresetSelection();
     formModelCapabilities = {};
     formRequestOptions = {};
+    protocolDetected = false;
     setProviderFormMode("providersAdd.title");
     $("#providerName").value = "";
     $("#providerBaseUrl").value = "";
@@ -1040,6 +1098,8 @@
     renderAuthSchemeControl();
     setFormApiFormat("anthropic");
     setProviderMappings(emptyMappings());
+    updateDetectFormatButton();
+    updateApplyButtonState();
   }
 
   function applyPresetToForm(preset, notify = true) {
@@ -1057,6 +1117,10 @@
     setProviderMappings(preset.models || emptyMappings());
     renderPresetOptions(preset, preset.models || emptyMappings());
     updatePresetSelection();
+    // 内置预设已知协议，第三方需要探测
+    protocolDetected = preset.id !== "third-party";
+    updateDetectFormatButton();
+    updateApplyButtonState();
     if (notify) showToast(`${preset.name} ${t("toast.presetFilled")}`);
   }
 
@@ -1097,6 +1161,9 @@
     setProviderMappings(provider.mappings || emptyMappings());
     renderPresetOptions(selectedPreset, provider.mappings || emptyMappings());
     updatePresetSelection();
+    protocolDetected = true;
+    updateDetectFormatButton();
+    updateApplyButtonState();
   }
 
   async function renderProviderForm() {
@@ -1881,11 +1948,36 @@
         if (!window.confirm(t("confirm.installUpdate"))) return;
         let keepBusyState = false;
         const status = $("#updateStatus");
+        let progressPoll = null;
         setUpdateInstallPhase("downloading");
         if (status) {
           status.textContent = t("toast.updateDownloading");
           status.classList.add("available");
+          status.style.setProperty("--progress", "0%");
         }
+        const startProgressPoll = () => {
+          progressPoll = setInterval(async () => {
+            try {
+              const progress = await CCApi.getUpdateProgress();
+              if (progress.active && status) {
+                status.style.setProperty("--progress", `${progress.percent}%`);
+                if (progress.message) {
+                  status.textContent = progress.message;
+                }
+              }
+            } catch (e) {}
+          }, 300);
+        };
+        const stopProgressPoll = () => {
+          if (progressPoll) {
+            clearInterval(progressPoll);
+            progressPoll = null;
+          }
+          if (status) {
+            status.style.setProperty("--progress", "0%");
+          }
+        };
+        startProgressPoll();
         try {
           const result = await CCApi.installUpdate($("#settingsUpdateUrl")?.value.trim() || "");
           updateCheckCache = result;
@@ -1900,8 +1992,13 @@
           showToast(message);
         } catch (error) {
           setUpdateInstallPhase("idle");
+          if (status) {
+            status.textContent = "下载失败，请重试";
+            status.classList.remove("available");
+          }
           throw error;
         } finally {
+          stopProgressPoll();
           if (!keepBusyState) setUpdateInstallPhase("idle");
         }
       }
@@ -1939,6 +2036,10 @@
 
       if (action === "apply-provider-desktop") {
         await applyProviderToDesktop(actionEl);
+      }
+
+      if (action === "detect-format") {
+        await handleDetectFormat();
       }
 
       if (action === "reapply-desktop") {
@@ -1995,6 +2096,8 @@
       if (formatButton) {
         event.preventDefault();
         setFormApiFormat(formatButton.dataset.apiFormat);
+        protocolDetected = true;
+        updateApplyButtonState();
         showToast(formatButton.dataset.apiFormat === "openai_chat" ? t("toast.openaiFormatExperimental") : t("toast.anthropicFormatSelected"));
         return;
       }
@@ -2026,6 +2129,12 @@
     document.addEventListener("input", (event) => {
       if (event.target.id === "providerBaseUrl") {
         renderBaseUrlOptions();
+        protocolDetected = false;
+        updateDetectFormatButton();
+        updateApplyButtonState();
+      }
+      if (event.target.id === "providerApiKey") {
+        updateDetectFormatButton();
       }
       const mappingInput = event.target.closest("[data-provider-model-input]");
       if (!mappingInput) return;

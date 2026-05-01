@@ -420,3 +420,115 @@ async def check_model_available(provider: dict, model: str) -> dict:
         return {"available": False, "message": "连接失败，请检查网络"}
     except Exception as e:
         return {"available": False, "message": f"{e.__class__.__name__}: {str(e)[:200]}"}
+
+
+# ── 协议类型自动探测 ──
+
+STANDARD_ENDPOINTS = [
+    ("/v1/messages", "anthropic"),
+    ("/messages", "anthropic"),
+    ("/v1/chat/completions", "openai_chat"),
+    ("/chat/completions", "openai_chat"),
+    ("/v1/responses", "openai_responses"),
+    ("/responses", "openai_responses"),
+]
+
+
+def _detect_format_from_response(data: dict, status_code: int, expected_format: str) -> tuple[bool, str]:
+    """根据响应体精确判断协议类型。"""
+    if not isinstance(data, dict):
+        return False, ""
+
+    # 成功响应判断
+    if status_code == 200:
+        if expected_format == "anthropic":
+            if data.get("type") == "message" and isinstance(data.get("content"), list):
+                return True, "high"
+        elif expected_format == "openai_chat":
+            if "choices" in data and isinstance(data.get("choices"), list):
+                return True, "high"
+        elif expected_format == "openai_responses":
+            if "output" in data and isinstance(data.get("output"), list):
+                return True, "high"
+
+    # 错误响应判断
+    if status_code in {400, 422}:
+        if expected_format == "anthropic":
+            if data.get("type") == "error" and isinstance(data.get("error"), dict):
+                return True, "high"
+        elif expected_format in {"openai_chat", "openai_responses"}:
+            error = data.get("error")
+            if isinstance(error, dict) and "message" in error:
+                return True, "high"
+
+    return False, ""
+
+
+async def _probe_single_endpoint(url: str, expected_format: str, api_key: str) -> dict[str, Any]:
+    """向单个端点发送探测请求。"""
+    body: dict[str, Any] = {}
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    if expected_format == "anthropic":
+        headers["anthropic-version"] = "2023-06-01"
+        body = {
+            "model": "___probe_test___",
+            "messages": [{"role": "user", "content": "test"}],
+            "max_tokens": 1,
+        }
+    elif expected_format == "openai_chat":
+        body = {
+            "model": "___probe_test___",
+            "messages": [{"role": "user", "content": "test"}],
+        }
+    elif expected_format == "openai_responses":
+        body = {
+            "model": "___probe_test___",
+            "input": "test",
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            resp = await client.post(url, json=body, headers=headers)
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+
+        detected, confidence = _detect_format_from_response(data, resp.status_code, expected_format)
+        if detected:
+            return {"detected": True, "confidence": confidence}
+
+        if resp.status_code in {401, 403}:
+            return {"detected": False, "exists": True}
+
+    except Exception:
+        pass
+
+    return {"detected": False, "exists": False}
+
+
+async def detect_api_format(base_url: str, api_key: str = "") -> dict[str, Any]:
+    """对标准化端点发送探测请求，精确判断协议类型。
+
+    返回 {"success": true, "apiFormat": ..., "endpoint": ..., "confidence": ...}
+    或 {"success": false, "message": ...}
+    """
+    clean = str(base_url or "").strip().rstrip("/")
+    if not clean:
+        return {"success": False, "message": "请填写 Base URL"}
+
+    for path, fmt in STANDARD_ENDPOINTS:
+        url = f"{clean}{path}"
+        result = await _probe_single_endpoint(url, fmt, api_key)
+        if result.get("detected"):
+            return {
+                "success": True,
+                "apiFormat": fmt,
+                "endpoint": url,
+                "confidence": result.get("confidence", "medium"),
+            }
+
+    return {"success": False, "message": "未能识别协议类型，请手动选择"}

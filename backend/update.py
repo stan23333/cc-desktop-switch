@@ -15,6 +15,20 @@ from urllib.parse import urlparse
 import httpx
 
 
+# ── 下载进度（内存状态，仅用于前端轮询） ──
+_download_progress: dict[str, Any] = {"active": False, "percent": 0, "message": ""}
+
+
+def get_download_progress() -> dict[str, Any]:
+    """返回当前下载进度。"""
+    return dict(_download_progress)
+
+
+def set_download_progress(active: bool = False, percent: int = 0, message: str = "") -> None:
+    """更新下载进度。"""
+    _download_progress.update({"active": active, "percent": percent, "message": message})
+
+
 class UpdateCheckError(Exception):
     """更新检查失败。"""
 
@@ -229,16 +243,31 @@ async def download_asset(
         async with httpx.AsyncClient(timeout=None, follow_redirects=True) as client:
             async with client.stream("GET", url) as response:
                 response.raise_for_status()
+                total_size = int(response.headers.get("Content-Length", 0))
+                downloaded = 0
+                set_download_progress(active=True, percent=0, message="开始下载...")
                 with partial.open("wb") as handle:
                     async for chunk in response.aiter_bytes():
                         if chunk:
                             handle.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                percent = min(100, int(downloaded / total_size * 100))
+                                set_download_progress(
+                                    active=True,
+                                    percent=percent,
+                                    message=f"下载中 {percent}%",
+                                )
+                set_download_progress(active=True, percent=100, message="下载完成，正在校验...")
     except httpx.HTTPError as exc:
         partial.unlink(missing_ok=True)
         raise UpdateCheckError(f"下载安装包失败: {exc}") from exc
     except OSError as exc:
+        set_download_progress(active=False, percent=0, message="")
         partial.unlink(missing_ok=True)
         raise UpdateCheckError(f"写入安装包失败: {exc}") from exc
+    finally:
+        set_download_progress(active=False, percent=0, message="")
 
     actual_sha = _file_sha256(partial)
     expected_sha = str(asset.get("sha256") or "").strip().lower()

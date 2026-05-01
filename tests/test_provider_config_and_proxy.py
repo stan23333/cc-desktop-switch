@@ -175,6 +175,7 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertEqual(deepseek_1m["models"]["opus"], "deepseek-v4-pro[1m]")
         self.assertEqual(deepseek_1m["models"]["default"], "deepseek-v4-pro[1m]")
         self.assertTrue(deepseek_1m["modelCapabilities"]["deepseek-v4-pro[1m]"]["supports1m"])
+        self.assertTrue(deepseek_1m["modelCapabilities"]["deepseek-v4-flash"]["supports1m"])
         deepseek_max = presets["deepseek"]["requestOptionPresets"]["deepseek_max_effort"]
         self.assertEqual(deepseek_max["requestOptions"]["anthropic"]["output_config"]["effort"], "max")
         self.assertEqual(deepseek_max["requestOptions"]["anthropic"]["thinking"]["type"], "enabled")
@@ -191,7 +192,11 @@ class ProviderConfigTests(unittest.TestCase):
                 "haiku": "deepseek-v4-flash",
                 "opus": "deepseek-v4-pro[1m]",
                 "default": "deepseek-v4-pro[1m]",
-            }
+            },
+            "modelCapabilities": {
+                "deepseek-v4-pro[1m]": {"supports1m": True},
+                "deepseek-v4-flash": {"supports1m": True},
+            },
         }
 
         models = registry.provider_inference_models(provider)
@@ -199,6 +204,8 @@ class ProviderConfigTests(unittest.TestCase):
 
         self.assertEqual(models[0]["name"], "deepseek-v4-pro[1m]")
         self.assertTrue(models[0]["supports1m"])
+        self.assertEqual(models[1]["name"], "deepseek-v4-flash")
+        self.assertTrue(models[1]["supports1m"])
         self.assertIn('"supports1m":true', serialized)
 
     def test_registry_inference_models_mark_capability_based_1m_models(self):
@@ -817,7 +824,11 @@ class ProviderConfigTests(unittest.TestCase):
                 "haiku": "deepseek-v4-flash",
                 "opus": "deepseek-v4-pro[1m]",
                 "default": "deepseek-v4-pro[1m]",
-            }
+            },
+            "modelCapabilities": {
+                "deepseek-v4-pro[1m]": {"supports1m": True},
+                "deepseek-v4-flash": {"supports1m": True},
+            },
         }
         old_status = {
             "configured": False,
@@ -838,7 +849,7 @@ class ProviderConfigTests(unittest.TestCase):
             "configured": True,
             "keys": {
                 "inferenceGatewayBaseUrl": "https://api.deepseek.com/anthropic",
-                "inferenceModels": '[{"name":"deepseek-v4-pro[1m]","supports1m":true},{"name":"deepseek-v4-flash"}]',
+                "inferenceModels": '[{"name":"deepseek-v4-pro[1m]","supports1m":true},{"name":"deepseek-v4-flash","supports1m":true}]',
             },
         }
 

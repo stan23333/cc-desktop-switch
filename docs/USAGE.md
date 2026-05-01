@@ -71,7 +71,7 @@ http://127.0.0.1:18081
 
 如果厂商更新了模型名，可以点“自动获取模型”，或手动改成厂商控制台里显示的模型 ID。
 
-DeepSeek 额外提供“解锁 1M 上下文”选项。勾选后，Sonnet、Opus 和默认模型会使用 `deepseek-v4-pro[1m]`。
+DeepSeek 额外提供“解锁 1M 上下文”选项。勾选后，Sonnet、Opus 和默认模型会使用 `deepseek-v4-pro[1m]`，Haiku 对应的 `deepseek-v4-flash` 也会写入 1M 能力声明。
 
 阿里云百炼额外提供“开启千问 1M 上下文”选项。勾选后，会把 `qwen3.6-plus` / `qwen3.6-flash` 的 1M 能力写入 Claude 桌面版；不勾选时按普通上下文显示。
 

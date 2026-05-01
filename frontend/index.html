@@ -141,6 +141,10 @@
                   <input class="form-control form-control-lg" id="providerApiKey" name="apiKey" type="password" placeholder="sk-..." autocomplete="current-password" required>
                   <button type="button" class="input-icon" data-action="toggle-key" aria-label="toggle api key"><i class="bi bi-eye"></i></button>
                 </div>
+                <div class="detect-format-row">
+                  <button class="btn btn-sm btn-danger" id="detectFormatBtn" type="button" data-action="detect-format" disabled><i class="bi bi-search"></i><span>识别协议类型</span></button>
+                  <span class="detect-format-status" id="detectFormatStatus"></span>
+                </div>
               </div>
               <div class="mb-4">
                 <label class="form-label required" for="providerAuth">Auth Scheme</label>

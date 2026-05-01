@@ -12,7 +12,7 @@
 |------|----------|------|
 | 权限静默 | `~/.claude/settings.json` + VSCode settings | Claude Code 默认每次工具调用都弹窗确认 |
 | WebFetch 预检 | `~/.claude/settings.json` | 抓网页前向 `claude.ai` 发预检，大陆网络被拦截 |
-| DeepSeek 功能受限 | DeepSeek API 本身 | Anthropic 兼容层不支持部分 Claude 原生功能 |
+| DeepSeek 功能受限 | DeepSeek API 本身 | Anthropic 兼容层支持常规 tools / tool_choice，但仍不支持图片、文档、搜索结果、服务器工具、Web Search、Code Execution、MCP 专用块等部分 Claude 原生内容类型 |
 
 **关键区别**：文档中的配置项（`permissions.defaultMode`、`skipWebFetchPreflight` 等）属于 **Claude Code** 的配置体系；而本项目（CC Desktop Switch）配置的是 **Claude Desktop** 的第三方推理（3P）体系。两者配置位置、作用范围完全不同。
 
@@ -49,34 +49,32 @@
 
 ---
 
-### 问题 2：DeepSeek Anthropic 兼容接口可能不支持 Tools（工具调用）
+### 问题 2：DeepSeek Anthropic 兼容接口对工具调用的支持范围已经更新
 
-**现象**：Claude Desktop 开启 MCP / Tools 后，使用 DeepSeek 作为上游时，工具调用可能失败或行为异常。
+**现象**：旧排查结论认为 DeepSeek Anthropic 兼容接口未公开支持 `tools` / `tool_choice` / `tool_use`，但 DeepSeek 现行官方文档已经列出常规 tools、tool_choice、tool_use 和 tool_result 的支持状态。
 
 **根因**：
-- 本项目代理层对 Anthropic 格式的请求是**透传**的（`proxy.py:347-353`）
-- `tools` 字段原样发给 DeepSeek 的 Anthropic 兼容端点
-- DeepSeek 的 Anthropic 兼容层目前**未公开支持** `tools` / `tool_choice` / `tool_use` 等字段
-- 对比：OpenAI 格式转换时，`api_adapters.py:175-179` 会显式转换 tools，说明开发者意识到 tools 需要特殊处理
+- 本项目对 Anthropic 格式供应商默认采用直连配置；进入本地代理时，Anthropic 格式请求也是按原格式透传，符合 DeepSeek 现行 Anthropic 兼容接口。
+- DeepSeek 官方文档显示，常规 `tools` 的 `name`、`input_schema`、`description` 已支持，`tool_choice` 的 `none`、`auto`、`any`、`tool` 已支持，消息内容里的 `tool_use` 与 `tool_result` 已支持。
+- DeepSeek 仍不支持部分 Claude 原生内容块，例如 `image`、`document`、`search_result`、`redacted_thinking`、`server_tool_use`、`web_search_tool_result`、`code_execution_tool_result`、`mcp_tool_use`、`mcp_tool_result`、`container_upload`。
 
 **代码佐证**：
 ```python
-# proxy.py:347-353 — Anthropic 格式直接透传，没有 tools 处理
+# proxy.py — Anthropic 格式直接透传
 upstream_body = dict(body)
 upstream_body.pop("stream", None)
 upstream_body = apply_anthropic_request_options(upstream_body, provider)
 
-# api_adapters.py:175-179 — OpenAI 格式才有 tools 转换
+# api_adapters.py — OpenAI 格式需要显式转换 tools
 tools = _anthropic_tools_to_openai(body.get("tools"))
 if tools:
     openai_body["tools"] = tools
 ```
 
 **解决方案**：
-- **短期**：在文档中明确标注 "DeepSeek Anthropic 兼容接口当前不支持 Tools / MCP，如需工具调用请使用官方 Claude API 或其他支持 tools 的提供商"
-- **中期**：在代理层增加检测，当上游是 DeepSeek 且请求含 `tools` 时，返回友好的错误提示：
-  > "DeepSeek 当前不支持工具调用，请在 Claude Desktop 设置中关闭相关 MCP / Tools"
-- **长期**：等待 DeepSeek 更新 Anthropic 兼容层支持 tools
+- **短期**：删除或替换“DeepSeek 不支持 Tools / MCP”的旧提示，避免误导用户。
+- **中期**：如要做更细的体验优化，可以只针对 DeepSeek 明确不支持的内容块增加友好提示，例如图片、文档、Web Search、Code Execution 或 MCP 专用块。
+- **长期**：继续跟踪 DeepSeek Anthropic API 的兼容表，避免把 Claude 原生能力和 DeepSeek 已支持能力混为一谈。
 
 ---
 
@@ -168,10 +166,10 @@ if original_model in provider_model_ids(provider):
 | 优先级 | 问题 | 建议措施 |
 |--------|------|----------|
 | 🔴 高 | 用户混淆 Claude Desktop 与 Claude Code | 文档增加明确边界说明 |
-| 🔴 高 | DeepSeek 不支持 Tools / MCP | 文档标注限制；代理层增加友好提示 |
+| 🟡 中 | DeepSeek 仅支持一部分 Claude 原生工具/内容块 | 文档更新为精确兼容范围；必要时对不支持的块增加友好提示 |
 | 🟡 中 | `isClaudeCodeForDesktopEnabled` 副作用 | 评估是否移除该字段 |
 | 🟡 中 | WebFetch 网络限制 | Troubleshooting 补充说明 |
 | 🟢 低 | effort UI 显示不一致 | 优化 UI 提示文案 |
 | 🟢 低 | 1M 模型映射 | 前端增加映射确认提示 |
 
-**核心结论**：文档中的问题本质是 **Claude Code** 的配置问题，本工具（配置 Claude Desktop 第三方推理）无法直接解决。但本项目应在文档中明确区分两者边界，并标注 DeepSeek 在 Claude Desktop 下的已知限制（尤其是 Tools / MCP 不支持）。
+**核心结论**：文档中的部分问题本质是 **Claude Code** 的配置问题，本工具（配置 Claude Desktop 第三方推理）无法直接解决。但本项目应在文档中明确区分两者边界，并精确标注 DeepSeek Anthropic 兼容接口支持和不支持的 Claude 原生能力。

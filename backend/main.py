@@ -211,15 +211,16 @@ def _desktop_health(
     ]
     one_million_ready = True
     if one_million_models:
-        one_million_ready = False
-        for item in inference_models:
+        written_one_million = {
+            str(item.get("name"))
+            for item in inference_models
             if (
                 isinstance(item, dict)
-                and item.get("name") in one_million_models
+                and item.get("name")
                 and item.get("supports1m") is True
-            ):
-                one_million_ready = True
-                break
+            )
+        }
+        one_million_ready = all(model in written_one_million for model in one_million_models)
         if not one_million_ready:
             issues.append({
                 "code": "one_million_not_written",
@@ -446,7 +447,7 @@ async def _detect_local_proxy() -> Optional[str]:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.16")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.17")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
@@ -601,6 +602,25 @@ def create_admin_app() -> FastAPI:
         """测试表单中尚未保存的 provider 连接。"""
         data = await request.json()
         return await _test_provider_connection(data)
+
+    @app.post("/api/providers/detect-format")
+    async def detect_provider_format(request: Request):
+        """探测第三方 API 的协议类型。"""
+        data = await request.json()
+        base_url = str(data.get("baseUrl") or "").strip()
+        api_key = str(data.get("apiKey") or "").strip()
+        if not base_url:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "请填写 Base URL"},
+            )
+        result = await provider_tools.detect_api_format(base_url, api_key)
+        if result.get("success"):
+            return result
+        return JSONResponse(
+            status_code=400,
+            content=result,
+        )
 
     @app.post("/api/providers/models/available")
     async def get_available_models_from_payload(request: Request):
@@ -951,6 +971,11 @@ def create_admin_app() -> FastAPI:
                 status_code=500,
                 content={"success": False, "message": f"启动安装器失败: {exc}"},
             )
+
+    @app.get("/api/update/progress")
+    async def get_update_progress():
+        """返回当前更新下载进度，供前端轮询。"""
+        return updater.get_download_progress()
 
     # ── 预设 API ──
     @app.get("/api/presets")
