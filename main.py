@@ -3,6 +3,8 @@
 
 import argparse
 import ctypes
+import json
+import os
 import sys
 import threading
 import time
@@ -10,7 +12,7 @@ import traceback
 from pathlib import Path
 import webbrowser
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import uvicorn
 
@@ -18,6 +20,7 @@ from backend.main import (
     create_admin_app,
     desktop_config_target_for_provider,
     register_update_quit_handler,
+    register_window_show_handler,
     _start_proxy_server,
     _stop_proxy_server,
 )
@@ -142,6 +145,83 @@ def start_admin_server(admin_app, port: int):
 def open_browser_when_ready(url: str):
     if wait_for_admin(url):
         webbrowser.open(url)
+
+
+class SingleInstanceGuard:
+    """跨平台文件锁，避免同一管理端口重复启动多个桌面进程。"""
+
+    def __init__(self, lock_path: Path):
+        self.lock_path = Path(lock_path)
+        self.handle = None
+
+    def acquire(self) -> bool:
+        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = self.lock_path.open("a+", encoding="utf-8")
+        if self.lock_path.stat().st_size == 0:
+            self.handle.write(" ")
+            self.handle.flush()
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                self.handle.seek(0)
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self.handle.close()
+            self.handle = None
+            return False
+
+        self.handle.seek(0)
+        self.handle.truncate()
+        self.handle.write(str(os.getpid()))
+        self.handle.flush()
+        return True
+
+    def release(self):
+        if not self.handle:
+            return
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                self.handle.seek(0)
+                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            self.handle.close()
+            self.handle = None
+
+
+def notify_existing_instance(admin_port: int, open_ui: bool = True) -> bool:
+    """第二次启动时唤起已有窗口；无桌面窗口时退回打开已有本机 UI。"""
+    url = f"http://127.0.0.1:{admin_port}"
+    body = json.dumps({}).encode("utf-8")
+    request = Request(
+        f"{url}/api/window/show",
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-CCDS-Request": "1",
+        },
+    )
+    try:
+        with urlopen(request, timeout=1.0) as response:
+            return response.status < 500
+    except (OSError, URLError):
+        if open_ui and wait_for_admin(url, timeout=1.2):
+            webbrowser.open(url)
+            return True
+    return False
 
 
 def _macos_should_quit_from_close_event() -> bool:
@@ -444,6 +524,17 @@ def open_desktop_window(url: str) -> bool:
                     pass
             tray.quit_app()
 
+        def request_show_existing_window():
+            if sys.platform == "darwin":
+                try:
+                    from PyObjCTools import AppHelper
+                    AppHelper.callAfter(tray.show_window)
+                    return True
+                except Exception:
+                    pass
+            tray.show_window()
+            return True
+
         tray_started = tray.start()
         if tray_started or sys.platform == "darwin":
             window.events.closing += tray.handle_window_closing
@@ -463,6 +554,7 @@ def open_desktop_window(url: str) -> bool:
             ]
 
         register_update_quit_handler(request_quit_for_update)
+        register_window_show_handler(request_show_existing_window)
         try:
             if sys.platform == "darwin":
                 webview.start(
@@ -475,6 +567,7 @@ def open_desktop_window(url: str) -> bool:
                 webview.start(debug=False, menu=menu)
         finally:
             register_update_quit_handler(None)
+            register_window_show_handler(None)
         return True
     except Exception as exc:
         safe_print(f"desktop window failed, fallback to browser: {exc}")
@@ -538,21 +631,31 @@ def main():
     admin_port = args.port or settings.get("adminPort", 18081)
     proxy_port = settings.get("proxyPort", 18080)
     auto_start_proxy = settings.get("autoStart", False)
+    guard = SingleInstanceGuard(Path(cfg.CONFIG_DIR) / f"ccds-admin-{admin_port}.lock")
+    if not guard.acquire():
+        if notify_existing_instance(admin_port, open_ui=not args.server_only):
+            safe_print("CC Desktop Switch 已在运行，已唤起现有实例。")
+        else:
+            safe_print("CC Desktop Switch 已在运行，但当前实例没有响应。")
+        return
 
-    # 如果开启了自动启动代理
-    if auto_start_proxy:
-        safe_print(f"  自动启动代理 (端口 {proxy_port})...")
-        _start_proxy_server(proxy_port)
+    try:
+        # 如果开启了自动启动代理
+        if auto_start_proxy:
+            safe_print(f"  自动启动代理 (端口 {proxy_port})...")
+            _start_proxy_server(proxy_port)
 
-    # 创建管理后台应用
-    admin_app = create_admin_app()
+        # 创建管理后台应用
+        admin_app = create_admin_app()
 
-    if args.server_only:
-        run_browser_mode(admin_app, admin_port, open_ui=False)
-    elif args.browser:
-        run_browser_mode(admin_app, admin_port, open_ui=True)
-    else:
-        run_desktop_mode(admin_app, admin_port)
+        if args.server_only:
+            run_browser_mode(admin_app, admin_port, open_ui=False)
+        elif args.browser:
+            run_browser_mode(admin_app, admin_port, open_ui=True)
+        else:
+            run_desktop_mode(admin_app, admin_port)
+    finally:
+        guard.release()
 
 
 if __name__ == "__main__":

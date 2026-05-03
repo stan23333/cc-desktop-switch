@@ -228,6 +228,10 @@
       return this.getDesktopStatus();
     },
 
+    async restartClaudeDesktop() {
+      return api('POST', '/api/desktop/restart');
+    },
+
     async startProxy(port) {
       if (port) {
         await this.saveSettings({ proxyPort: Number(port) });

@@ -31,6 +31,7 @@ macos-packaging-plan.md
 
 # Local-only project materials and generated review screenshots.
 agent/
+codex_history/
 prompt-codex.md
 image/
 ccds-*.png
@@ -39,3 +40,5 @@ docs/promo/screenshots/*
 
 # Failed favicon download kept locally for reference; the app uses zhipu.png.
 frontend/assets/providers/zhipu.ico
+tmp-kimi-tp.md
+tmp-mimo-pft.md

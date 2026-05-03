@@ -38,6 +38,7 @@ from backend.proxy import (
 # 前端目录: 项目根目录下的 frontend/
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 _update_quit_handler: Optional[Callable[[], None]] = None
+_window_show_handler: Optional[Callable[[], bool]] = None
 
 
 def _popen_hidden(command: list[str], *, detached: bool = False):
@@ -67,9 +68,25 @@ def register_update_quit_handler(handler: Optional[Callable[[], None]]):
     _update_quit_handler = handler
 
 
+def register_window_show_handler(handler: Optional[Callable[[], bool]]):
+    """注册让已有桌面窗口回到前台的回调。"""
+    global _window_show_handler
+    _window_show_handler = handler
+
+
 def _get_update_quit_handler() -> Optional[Callable[[], None]]:
     handler = _update_quit_handler
     return handler if callable(handler) else None
+
+
+def _request_window_show() -> bool:
+    handler = _window_show_handler
+    if not callable(handler):
+        return False
+    try:
+        return bool(handler())
+    except Exception:
+        return False
 
 
 def _schedule_update_quit_for_install(handler: Callable[[], None], delay: float = 0.8) -> bool:
@@ -100,6 +117,49 @@ def _launch_update_installer(installer_path: str, platform: str) -> bool:
     command = updater.install_command(installer_path, platform)
     _popen_hidden(command, detached=True)
     return False
+
+
+def _claude_desktop_restart_command() -> list[str]:
+    """生成重启 Claude Desktop 的平台命令。"""
+    if sys.platform == "win32":
+        script = r"""
+$ErrorActionPreference = 'SilentlyContinue'
+$processes = Get-Process | Where-Object { $_.ProcessName -in @('Claude', 'Claude Desktop') -or $_.MainWindowTitle -like '*Claude*' }
+foreach ($process in $processes) {
+    if ($process.MainWindowHandle -ne 0) { [void]$process.CloseMainWindow() }
+}
+Start-Sleep -Seconds 2
+$processes = Get-Process | Where-Object { $_.ProcessName -in @('Claude', 'Claude Desktop') -or $_.MainWindowTitle -like '*Claude*' }
+if ($processes) { $processes | Stop-Process -Force }
+$candidates = @(
+    "$env:LOCALAPPDATA\Programs\Claude\Claude.exe",
+    "$env:LOCALAPPDATA\AnthropicClaude\Claude.exe",
+    "$env:PROGRAMFILES\Claude\Claude.exe",
+    "${env:PROGRAMFILES(X86)}\Claude\Claude.exe"
+)
+foreach ($candidate in $candidates) {
+    if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+        Start-Process -FilePath $candidate
+        exit 0
+    }
+}
+Start-Process -FilePath "Claude"
+"""
+        return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script]
+    if sys.platform == "darwin":
+        script = (
+            '/usr/bin/osascript -e \'tell application id "com.anthropic.claudefordesktop" to quit\' '
+            '>/dev/null 2>&1 || true; sleep 1; '
+            '/usr/bin/open -b com.anthropic.claudefordesktop'
+        )
+        return ["/bin/sh", "-c", script]
+    raise RuntimeError("当前平台暂不支持自动重启 Claude Desktop")
+
+
+def restart_claude_desktop() -> dict:
+    command = _claude_desktop_restart_command()
+    _popen_hidden(command, detached=True)
+    return {"success": True, "message": "已请求重启 Claude Desktop"}
 
 
 def _public_provider(provider: Optional[dict]) -> Optional[dict]:
@@ -791,6 +851,16 @@ def create_admin_app() -> FastAPI:
         }
 
     # ── Desktop 集成 API ──
+    @app.post("/api/window/show")
+    async def show_existing_window():
+        """让已有桌面窗口回到前台，供第二次启动时复用。"""
+        if _request_window_show():
+            return {"success": True, "message": "窗口已唤起"}
+        return JSONResponse(
+            status_code=409,
+            content={"success": False, "message": "当前运行模式没有可唤起的桌面窗口"},
+        )
+
     @app.get("/api/desktop/status")
     async def get_desktop_status():
         """获取 Desktop 注册表配置状态"""
@@ -831,6 +901,17 @@ def create_admin_app() -> FastAPI:
     async def clear_desktop_config():
         """清除 Desktop 注册表配置"""
         return registry.clear_config()
+
+    @app.post("/api/desktop/restart")
+    async def restart_desktop_app():
+        """重启 Claude Desktop，让最新 3P 配置生效。"""
+        try:
+            return restart_claude_desktop()
+        except RuntimeError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": str(exc)},
+            )
 
     # ── 代理 API ──
     @app.get("/api/proxy/status")

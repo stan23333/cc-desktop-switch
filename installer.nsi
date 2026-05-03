@@ -10,14 +10,14 @@
 !define PRODUCT_NAME "CC Desktop Switch"
 !define PRODUCT_VERSION "1.0.17"
 !define PRODUCT_PUBLISHER "CC Desktop Switch"
-!define PRODUCT_DIR "$PROGRAMFILES64\CC-Desktop-Switch"
+!define PRODUCT_DIR "$LOCALAPPDATA\Programs\CC-Desktop-Switch"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile "CC-Desktop-Switch-Setup-${PRODUCT_VERSION}.exe"
 InstallDir "${PRODUCT_DIR}"
-InstallDirRegKey HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation"
-RequestExecutionLevel admin
+InstallDirRegKey HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation"
+RequestExecutionLevel user
 
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
@@ -45,8 +45,8 @@ RequestExecutionLevel admin
 !insertmacro MUI_LANGUAGE "English"
 
 Function .onInit
-    ReadRegStr $R1 HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation"
-    ReadRegStr $R0 HKLM "${PRODUCT_UNINST_KEY}" "UninstallString"
+    ReadRegStr $R1 HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation"
+    ReadRegStr $R0 HKCU "${PRODUCT_UNINST_KEY}" "UninstallString"
     ${If} $R1 == ""
     ${AndIf} $R0 != ""
         ${GetParent} $R0 $R1
@@ -82,18 +82,18 @@ Section "Main" SEC01
 
     CreateShortCut "$DESKTOP\${PRODUCT_NAME}.lnk" "$INSTDIR\CC-Desktop-Switch.exe"
 
-    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
-    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninst.exe"
-    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation" "$INSTDIR"
-    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$INSTDIR\CC-Desktop-Switch.exe"
-    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
-    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
-    WriteRegDWORD HKLM "${PRODUCT_UNINST_KEY}" "NoModify" 1
-    WriteRegDWORD HKLM "${PRODUCT_UNINST_KEY}" "NoRepair" 1
+    WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
+    WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninst.exe"
+    WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation" "$INSTDIR"
+    WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$INSTDIR\CC-Desktop-Switch.exe"
+    WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
+    WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
+    WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "NoModify" 1
+    WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "NoRepair" 1
 
     ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
     IntFmt $0 "0x%08X" $0
-    WriteRegDWORD HKLM "${PRODUCT_UNINST_KEY}" "EstimatedSize" "$0"
+    WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "EstimatedSize" "$0"
 
     WriteUninstaller "$INSTDIR\uninst.exe"
 SectionEnd
@@ -103,7 +103,7 @@ Section "Uninstall"
     Delete "$DESKTOP\${PRODUCT_NAME}.lnk"
     RMDir /r "$SMPROGRAMS\${PRODUCT_NAME}"
     RMDir /r "$INSTDIR"
-    DeleteRegKey HKLM "${PRODUCT_UNINST_KEY}"
+    DeleteRegKey HKCU "${PRODUCT_UNINST_KEY}"
 SectionEnd
 
 Function un.CloseRunningApp

@@ -107,6 +107,24 @@
     restartReminderModal?.hide();
   }
 
+  async function restartClaudeDesktopFromUi(button, hideReminder = false) {
+    const originalHtml = button?.innerHTML;
+    if (button) {
+      button.disabled = true;
+      button.innerHTML = `<span class="spinner-border spinner-border-sm" aria-hidden="true"></span><span>${escapeHtml(t("restartReminder.restarting"))}</span>`;
+    }
+    try {
+      const result = await CCApi.restartClaudeDesktop();
+      showToast(result.message || t("toast.claudeRestartRequested"));
+      if (hideReminder) dismissRestartReminder();
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.innerHTML = originalHtml;
+      }
+    }
+  }
+
   function t(key) {
     return CCI18n.t(key);
   }
@@ -1848,6 +1866,12 @@
         await CCApi.configureDesktop();
         await renderDesktop();
         showToast(t("toast.desktopApplied"));
+        showRestartReminder();
+      }
+
+      if (action === "restart-claude") {
+        if (!window.confirm(t("confirm.restartClaude"))) return;
+        await restartClaudeDesktopFromUi(actionEl);
       }
 
       if (action === "clear-desktop") {
@@ -2187,6 +2211,14 @@
       importConfigFile(event.target.files?.[0]);
     });
     $("#restartReminderAck")?.addEventListener("click", dismissRestartReminder);
+    $("#restartReminderNow")?.addEventListener("click", async (event) => {
+      try {
+        await restartClaudeDesktopFromUi(event.currentTarget, true);
+      } catch (error) {
+        console.error(error);
+        showToast(error.message || t("toast.requestFailed"));
+      }
+    });
 
     $("#confirmDelete").addEventListener("click", async () => {
       if (!pendingDeleteId) return;

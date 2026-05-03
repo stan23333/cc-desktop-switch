@@ -11,9 +11,9 @@ echo.
 echo  请选择打包方式：
 echo.
 echo    [1] 文件夹模式       —— 启动快，日常调试用
-echo    [2] 单文件 exe       —— 一个文件，绿色便携
-echo    [3] ZIP 安装包       —— 解压即用
-echo    [4] Setup 安装包     —— ⭐ 真正的安装程序（需装 NSIS）
+echo    [2] 单文件 exe       —— 一个文件，便携运行，不创建快捷方式
+echo    [3] ZIP 便携包       —— 解压即用，不创建快捷方式
+echo    [4] Setup 安装包     —— 当前用户安装，创建桌面和开始菜单快捷方式（需装 NSIS）
 echo.
 echo    [Q] 退出
 echo.

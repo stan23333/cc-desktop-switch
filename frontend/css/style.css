@@ -3162,6 +3162,12 @@ body {
   gap: 12px;
 }
 
+.restart-modal-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .restart-reminder-check {
   display: inline-flex;
   align-items: center;

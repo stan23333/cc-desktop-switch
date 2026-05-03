@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -10,8 +11,14 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.main import _desktop_health, _test_provider_connection, create_admin_app, desktop_config_target_for_provider
-from main import DesktopTrayController
+from backend.main import (
+    _desktop_health,
+    _test_provider_connection,
+    create_admin_app,
+    desktop_config_target_for_provider,
+    register_window_show_handler,
+)
+from main import DesktopTrayController, SingleInstanceGuard, notify_existing_instance
 from backend import config as cfg
 from backend import ccswitch_import
 from backend import provider_tools
@@ -1186,6 +1193,7 @@ class AdminApiTests(unittest.TestCase):
         self.client = TestClient(create_admin_app())
 
     def tearDown(self):
+        register_window_show_handler(None)
         cfg.CONFIG_DIR = self.old_config_dir
         cfg.CONFIG_FILE = self.old_config_file
         cfg.BACKUP_DIR = self.old_backup_dir
@@ -1231,6 +1239,40 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 403)
         self.assertEqual(allowed.status_code, 200)
         self.assertEqual(allowed.json()["apiKey"], "secret-key")
+
+    def test_window_show_requires_header_and_invokes_registered_handler(self):
+        calls = []
+
+        register_window_show_handler(lambda: calls.append("shown") or True)
+
+        blocked = self.client.post("/api/window/show")
+        allowed = self.client.post("/api/window/show", headers={"x-ccds-request": "1"})
+
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(calls, ["shown"])
+
+    def test_window_show_reports_missing_desktop_window(self):
+        response = self.client.post("/api/window/show", headers={"x-ccds-request": "1"})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(response.json()["success"])
+
+    def test_restart_desktop_route_launches_platform_helper(self):
+        with patch("backend.main.sys.platform", "darwin"):
+            with patch("backend.main._popen_hidden") as popen:
+                response = self.client.post(
+                    "/api/desktop/restart",
+                    headers={"x-ccds-request": "1"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["success"])
+        popen.assert_called_once()
+        command = popen.call_args.args[0]
+        self.assertEqual(command[:2], ["/bin/sh", "-c"])
+        self.assertIn("com.anthropic.claudefordesktop", command[2])
+        self.assertTrue(popen.call_args.kwargs["detached"])
 
     def test_autofill_models_route_updates_provider_mapping(self):
         provider = cfg.add_provider({
@@ -2169,6 +2211,53 @@ class FakeTrayWindow:
         self.destroyed += 1
 
 
+class MainStartupTests(unittest.TestCase):
+    def test_single_instance_guard_writes_pid_and_releases_lock(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_path = Path(temp_dir) / "ccds.lock"
+            guard = SingleInstanceGuard(lock_path)
+
+            self.assertTrue(guard.acquire())
+            self.assertIn(str(os.getpid()), lock_path.read_text(encoding="utf-8"))
+            guard.release()
+
+    def test_single_instance_guard_reports_lock_contention(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            guard = SingleInstanceGuard(Path(temp_dir) / "ccds.lock")
+
+            if sys.platform == "win32":
+                target = "msvcrt.locking"
+            else:
+                target = "fcntl.flock"
+            with patch(target, side_effect=OSError("locked")):
+                self.assertFalse(guard.acquire())
+
+    def test_notify_existing_instance_posts_show_request_with_local_header(self):
+        captured = {}
+
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["headers"] = dict(request.header_items())
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        with patch("main.urlopen", side_effect=fake_urlopen):
+            self.assertTrue(notify_existing_instance(18081))
+
+        self.assertEqual(captured["url"], "http://127.0.0.1:18081/api/window/show")
+        self.assertEqual(captured["headers"]["X-ccds-request"], "1")
+        self.assertEqual(captured["timeout"], 1.0)
+
+
 class FakeTrayIcon:
     def __init__(self):
         self.notifications = []
@@ -2377,14 +2466,26 @@ class DesktopTrayControllerTests(unittest.TestCase):
         self.assertIn("Kimi", message_box.call_args.args[1])
         self.assertIn("重新打开 Claude 桌面版", message_box.call_args.args[1])
 
-    def test_installer_reuses_previous_install_dir_and_closes_running_app(self):
+    def test_installer_uses_current_user_install_without_admin_prompt(self):
         installer = Path(__file__).resolve().parents[1] / "installer.nsi"
         text = installer.read_text(encoding="utf-8")
 
-        self.assertIn('InstallDirRegKey HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation"', text)
-        self.assertIn('ReadRegStr $R1 HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation"', text)
+        self.assertIn(r'!define PRODUCT_DIR "$LOCALAPPDATA\Programs\CC-Desktop-Switch"', text)
+        self.assertIn('InstallDirRegKey HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation"', text)
+        self.assertIn("RequestExecutionLevel user", text)
+        self.assertIn('ReadRegStr $R1 HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation"', text)
         self.assertIn('taskkill /IM "CC-Desktop-Switch.exe" /T /F', text)
-        self.assertIn('WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "InstallLocation" "$INSTDIR"', text)
+        self.assertIn('WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation" "$INSTDIR"', text)
+        self.assertIn('CreateShortCut "$SMPROGRAMS\\${PRODUCT_NAME}\\${PRODUCT_NAME}.lnk"', text)
+        self.assertIn('CreateShortCut "$DESKTOP\\${PRODUCT_NAME}.lnk"', text)
+        self.assertNotIn("RequestExecutionLevel admin", text)
+
+    def test_pyinstaller_windows_build_does_not_force_uac_admin(self):
+        spec = Path(__file__).resolve().parents[1] / "build.spec"
+        text = spec.read_text(encoding="utf-8")
+
+        self.assertIn("uac_admin=False", text)
+        self.assertNotIn("uac_admin=True", text)
 
 
 class StaticFrontendTests(unittest.TestCase):
@@ -2415,6 +2516,20 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn("Claude 桌面版", html)
         self.assertIn("原理很简单", i18n)
         self.assertNotIn("Claude Desktop 3P 模式", html)
+
+    def test_restart_claude_desktop_ui_is_wired(self):
+        html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")
+        app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        api_js = (self.root / "frontend" / "js" / "api.js").read_text(encoding="utf-8")
+        i18n = (self.root / "frontend" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+        self.assertIn('data-action="restart-claude"', html)
+        self.assertIn('id="restartReminderNow"', html)
+        self.assertIn("restartClaudeDesktop", api_js)
+        self.assertIn("/api/desktop/restart", api_js)
+        self.assertIn("restartClaudeDesktopFromUi", app_js)
+        self.assertIn("confirm.restartClaude", app_js + i18n)
+        self.assertIn("restartReminder.restartNow", html + i18n)
 
     def test_provider_add_presets_and_guide_copy_are_user_facing(self):
         html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")

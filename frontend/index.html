@@ -248,6 +248,7 @@
                 <p data-i18n="desktop.explainText">原理很简单：Claude 桌面版先连接到本工具；本工具再把 Claude 的模型名翻译成你选择的供应商模型，并转发到对应 API。你的上游 API Key 只保存在本机配置里，不直接写进 Claude 桌面版。</p>
               </div>
               <button class="btn btn-primary btn-lg w-100" type="button" data-action="apply-desktop"><i class="bi bi-download"></i><span data-i18n="desktop.apply">应用到 Claude 桌面版</span></button>
+              <button class="btn btn-outline-primary btn-lg w-100 mt-2" type="button" data-action="restart-claude"><i class="bi bi-arrow-clockwise"></i><span data-i18n="desktop.restartClaude">重启 Claude 桌面版</span></button>
             </article>
             <article class="panel details-panel">
               <div class="panel-header">
@@ -453,7 +454,10 @@
           </div>
           <div class="modal-footer restart-modal-footer">
             <label class="restart-reminder-check"><input type="checkbox" id="restartReminderDontShow"><span data-i18n="restartReminder.dontShow">不再提醒</span></label>
-            <button type="button" class="btn btn-primary" id="restartReminderAck" data-i18n="restartReminder.ack">我已知晓</button>
+            <div class="restart-modal-actions">
+              <button type="button" class="btn btn-outline-secondary" id="restartReminderAck" data-i18n="restartReminder.ack">稍后重启</button>
+              <button type="button" class="btn btn-primary" id="restartReminderNow"><i class="bi bi-arrow-clockwise"></i><span data-i18n="restartReminder.restartNow">立即重启</span></button>
+            </div>
           </div>
         </div>
       </div>
