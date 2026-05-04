@@ -3,7 +3,6 @@ use tauri::http::{Response, StatusCode, header};
 
 static FRONTEND: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../frontend");
 static INDEX_HTML: &str = include_str!("../../frontend/index.html");
-static TAURI_API: &str = include_str!("../../src/originalApiBridge.js");
 
 pub fn serve(path: &str) -> Response<Vec<u8>> {
     let trimmed = path.trim_start_matches('/');
@@ -14,22 +13,7 @@ pub fn serve(path: &str) -> Response<Vec<u8>> {
     };
 
     if lookup_path == "index.html" {
-        return text_response(
-            "text/html; charset=utf-8",
-            INDEX_HTML
-                .replace(
-                    r#"<script src="js/api.js"></script>"#,
-                    r#"<script src="js/tauri-api.js"></script>"#,
-                )
-                .into_bytes(),
-        );
-    }
-
-    if lookup_path == "js/tauri-api.js" {
-        return text_response(
-            "application/javascript; charset=utf-8",
-            TAURI_API.as_bytes().to_vec(),
-        );
+        return text_response("text/html; charset=utf-8", INDEX_HTML.as_bytes().to_vec());
     }
 
     if let Some(file) = FRONTEND.get_file(lookup_path) {

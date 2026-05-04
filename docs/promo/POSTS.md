@@ -155,7 +155,7 @@ Claude Desktop
 
 目前做了这些：
 
-- FastAPI 管理后台。
+- Tauri + Rust 桌面运行时。
 - Vanilla JS + Bootstrap 前端。
 - Provider 预设：DeepSeek、Kimi、智谱、阿里云百炼。
 - 主流程使用 Anthropic 兼容接口，避免用户手动判断 API 格式。

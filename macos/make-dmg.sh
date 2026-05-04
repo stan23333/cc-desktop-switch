@@ -2,19 +2,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+NODE_BIN="${NODE_BIN:-node}"
 detect_version() {
-  "$PYTHON_BIN" - "$ROOT/main.py" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r'^APP_VERSION\s*=\s*["\']([^"\']+)["\']', text, re.MULTILINE)
-if not match:
-    raise SystemExit("APP_VERSION not found in main.py")
-print(match.group(1))
-PY
+  "$NODE_BIN" -e 'const fs = require("fs"); const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (!pkg.version) throw new Error("version not found in package.json"); console.log(pkg.version);' "$ROOT/package.json"
 }
 
 VERSION="${1:-${CCDS_VERSION:-$(detect_version)}}"

@@ -2,7 +2,7 @@
 
 > For future agents: implement this plan only after the user explicitly approves the migration. Do not commit or push unless the user explicitly asks for commits in the current conversation.
 
-**Goal:** Move CC Desktop Switch from the current Python + pywebview desktop runtime to a faster, smaller, more native Tauri application while preserving the existing user-facing behavior and release compatibility.
+**Goal:** Move CC Desktop Switch from the former Python + pywebview desktop runtime to a faster, smaller, more native Tauri application while preserving the existing user-facing behavior and release compatibility.
 
 **Architecture:** Use Tauri v2 as the desktop shell. Move local config, Claude Desktop integration, update handling, single-instance behavior, provider management, and local forwarding into Rust modules. Rebuild the frontend as TypeScript with a component framework, while keeping the current UI workflow and terminology intact.
 
@@ -12,15 +12,12 @@
 
 ## Current Code Shape
 
-- Python runtime entry and desktop shell: `main.py`.
-- FastAPI management API and static frontend server: `backend/main.py`.
-- Local provider config and built-in presets: `backend/config.py`.
-- Claude Desktop Windows registry and macOS plist / JSON config writes: `backend/registry.py`.
-- Local Anthropic / OpenAI-compatible proxy and SSE streaming: `backend/proxy.py`.
-- API adapters and provider utilities: `backend/api_adapters.py`, `backend/provider_tools.py`, `backend/model_alias.py`, `backend/ccswitch_import.py`, `backend/update.py`.
-- Frontend: `frontend/index.html`, `frontend/js/app.js`, `frontend/js/api.js`, `frontend/js/i18n.js`, `frontend/css/style.css`.
+- Retired Python runtime entry and desktop shell: `main.py`.
+- Retired FastAPI management API and static frontend server: `backend/main.py`.
+- Retired Python provider config, desktop integration, local proxy, API adapter, provider-tool, CC-Switch import, and update modules under `backend/`.
+- Frontend: `frontend/index.html`, `frontend/js/app.js`, `frontend/js/tauri-api.js`, `frontend/js/i18n.js`, `frontend/css/style.css`.
 - Current packaging: Windows release artifacts are built from Tauri/Rust output through `.github/workflows/release.yml` and `scripts/New-Release.ps1`; `windows/build.bat` is only a local helper. macOS release packaging builds the `.app` through Tauri and wraps it with `macos/make-pkg.sh` / `macos/make-dmg.sh`. The pre-Tauri macOS Python/PyInstaller app-build path was removed after v1.1.0 parity.
-- Tests: `tests/test_provider_config_and_proxy.py`.
+- Tests: Rust unit tests under `src-tauri/src/` plus `scripts/check-static-contracts.mjs` for frontend bridge and release-chain static contracts.
 
 ## Recommended Target
 
@@ -33,7 +30,7 @@ The final steady state should be:
 - Rust owns runtime logic, platform integration, local proxy, update flow, config storage, and packaging entrypoints.
 - TypeScript owns the visual interface and state management.
 - JSON schemas shared through generated TypeScript types keep the boundary strict.
-- Python is removed from the shipping runtime after parity is reached. Small one-off maintenance scripts can stay only if they are not part of app startup or packaging.
+- Python has been removed from the shipping runtime after parity was reached. Small one-off maintenance scripts can stay only if they are not part of app startup or packaging.
 
 ## Migration Strategy
 
@@ -169,12 +166,12 @@ The final steady state should be:
 ### Phase 7: Retire Python only after parity
 
 **Files:**
-- Keep until the Windows compatibility path is replaced or intentionally retired: `main.py`
-- Keep until the Windows compatibility path is replaced or intentionally retired: `backend/`
+- Removed after Windows compatibility path replacement: `main.py`
+- Removed after Windows compatibility path replacement: `backend/`
 - Removed after Windows release moved to Tauri artifacts: `windows/build.spec`
-- Keep until the Windows compatibility path is replaced or intentionally retired: `requirements.txt`
+- Removed after Windows compatibility path replacement: `requirements.txt`
 - Removed after parity: `macos/build-macos.sh`, `macos/build-macos.spec`, `macos/prepare-icon.py`, and `macos/entitlements.plist`
-- Replace tests: `tests/test_provider_config_and_proxy.py` with Rust and frontend tests
+- Replaced tests: `tests/test_provider_config_and_proxy.py` with Rust tests and `scripts/check-static-contracts.mjs`
 - Update: `README.md`
 - Update: `docs/USAGE.md`
 - Update: `docs/QUICK_START.md`

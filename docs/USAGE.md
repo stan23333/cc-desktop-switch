@@ -30,15 +30,10 @@ CC-Desktop-Switch-v<最新版本>-Windows-Portable.zip
 
 macOS 用户可以下载 Release 页面里的 DMG 或 PKG。DMG 打开后把应用拖到“应用程序”；PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。
 
-启动后会打开一个桌面窗口。浏览器地址只是备用入口：
-
-```text
-http://127.0.0.1:18081
-```
+启动后会打开一个桌面窗口。
 
 默认端口：
 
-- 管理界面：`18081`
 - 本机转发服务：`18080`，仅实验兼容接口或调试时需要。
 
 ### 2. 添加提供商

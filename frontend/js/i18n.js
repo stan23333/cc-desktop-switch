@@ -512,7 +512,7 @@
       "toast.allModelsEnabled": "All-model display enabled. Re-apply and restart Claude Desktop.",
       "toast.singleModelEnabled": "Switched back to current-provider display. Re-apply and restart Claude Desktop.",
       "toast.compatibilityChecked": "Compatibility check completed",
-      "toast.requestFailed": "Operation failed. Check backend logs.",
+      "toast.requestFailed": "Operation failed. Check app logs.",
       "confirm.desktopApply": "This will connect Claude Desktop to this app for the current system user. Continue?",
       "confirm.title": "Confirm Action",
       "confirm.desktopClear": "This clears the Claude Desktop connection settings written by this app and restores manual setup. It will not delete providers or API keys saved in this app. Continue?",

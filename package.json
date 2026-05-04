@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm build && vite preview --host 127.0.0.1",
     "build": "node scripts/build-tauri-frontend.mjs",
+    "check:static": "node scripts/check-static-contracts.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

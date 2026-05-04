@@ -24,8 +24,8 @@ ditto src-tauri/target/release/bundle/macos/CC\ Desktop\ Switch.app dist/mac/CC\
 Then create the installer package and drag-and-drop disk image:
 
 ```bash
-PYTHON_BIN=.tmp/test-venv/bin/python ./macos/make-pkg.sh 1.1.0 "dist/mac/CC Desktop Switch.app" "dist/mac/CC-Desktop-Switch-v1.1.0-macOS-arm64.pkg"
-PYTHON_BIN=.tmp/test-venv/bin/python ./macos/make-dmg.sh 1.1.0 "dist/mac/CC Desktop Switch.app" "dist/mac/CC-Desktop-Switch-v1.1.0-macOS-arm64.dmg"
+./macos/make-pkg.sh 1.1.0 "dist/mac/CC Desktop Switch.app" "dist/mac/CC-Desktop-Switch-v1.1.0-macOS-arm64.pkg"
+./macos/make-dmg.sh 1.1.0 "dist/mac/CC Desktop Switch.app" "dist/mac/CC-Desktop-Switch-v1.1.0-macOS-arm64.dmg"
 ```
 
 All macOS release outputs stay under:
