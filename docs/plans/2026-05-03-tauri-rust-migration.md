@@ -175,8 +175,7 @@ The final steady state should be:
 - Update: `README.md`
 - Update: `docs/USAGE.md`
 - Update: `docs/QUICK_START.md`
-- Update: `agent/operations.md`
-- Update: `agent/technical-notes.md`
+- Update local-only project-management notes when useful.
 
 **Steps:**
 1. Keep Python release path until Rust app passes parity checks on both Windows and macOS.
