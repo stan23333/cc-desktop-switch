@@ -197,14 +197,14 @@ pnpm install
 pnpm tauri dev
 ```
 
-Python 路径仍保留给 Windows 兼容打包和回退验证：
+Python 路径仍保留给回退验证和旧运行时对照：
 
 ```powershell
 pip install -r requirements.txt
 python main.py --browser
 ```
 
-Windows 兼容打包入口已整理到 `windows/`，发布脚本仍由 `scripts/New-Release.ps1` 调用。
+Windows 发布打包现在由 Tauri/Rust 产物生成，`scripts/New-Release.ps1` 会调用 Tauri 构建并整理 Setup、Portable ZIP、x64 EXE 和 `latest.json`。`windows/build.bat` 只保留为 Windows 本地手动构建入口。
 
 ## 验证
 
@@ -263,7 +263,7 @@ netstat -ano | findstr :18080
 - 兼容后端：Python, FastAPI, httpx, uvicorn
 - 前端：HTML, CSS, Vanilla JavaScript, Bootstrap 5.3
 - 存储：`~/.cc-desktop-switch/config.json`
-- 打包：Tauri CLI, PyInstaller, NSIS
+- 打包：Tauri CLI, Tauri NSIS bundler, macOS PKG/DMG wrapper scripts
 
 ## 安全说明
 

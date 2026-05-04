@@ -81,19 +81,6 @@ function Sign-File {
     return $sigPath
 }
 
-function Get-Makensis {
-    $cmd = Get-Command makensis -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
-    $candidates = @(
-        "C:\Program Files (x86)\NSIS\makensis.exe",
-        "C:\Program Files\NSIS\makensis.exe"
-    )
-    foreach ($candidate in $candidates) {
-        if (Test-Path -LiteralPath $candidate) { return $candidate }
-    }
-    return $null
-}
-
 function Add-Asset {
     param(
         [System.Collections.Generic.List[object]]$Assets,
@@ -113,6 +100,57 @@ function Add-Asset {
         sha256 = $sha
         size = (Get-Item -LiteralPath $Path).Length
     }) | Out-Null
+}
+
+function Invoke-TauriBuild {
+    param([string[]]$Arguments)
+
+    $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
+    if (-not $pnpm) {
+        throw "pnpm not found. Install Node.js with corepack enabled before building Tauri release artifacts."
+    }
+
+    $tauriArgs = @("tauri", "build") + $Arguments
+    & $pnpm.Source @tauriArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Tauri build failed with exit code $LASTEXITCODE"
+    }
+}
+
+function Get-TauriWindowsExecutable {
+    param([string]$TauriReleaseDir)
+
+    $candidate = Join-Path $TauriReleaseDir "cc-desktop-switch.exe"
+    if (Test-Path -LiteralPath $candidate) {
+        return $candidate
+    }
+
+    $match = Get-ChildItem -LiteralPath $TauriReleaseDir -File -Filter "*.exe" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notmatch "setup|installer" } |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($match) {
+        return $match.FullName
+    }
+
+    throw "Tauri Windows executable not found under $TauriReleaseDir"
+}
+
+function Get-TauriNsisInstaller {
+    param([string]$TauriReleaseDir)
+
+    $nsisDir = Join-Path $TauriReleaseDir "bundle\nsis"
+    if (-not (Test-Path -LiteralPath $nsisDir)) {
+        return $null
+    }
+
+    $match = Get-ChildItem -LiteralPath $nsisDir -File -Filter "*.exe" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($match) {
+        return $match.FullName
+    }
+    return $null
 }
 
 function Add-MacPlatformAssets {
@@ -197,12 +235,7 @@ function Invoke-OptionalCodeSigning {
 $root = Get-ProjectRoot
 $releaseDir = Join-Path $root $OutputDir
 $distDir = Join-Path $root "dist"
-$windowsDir = Join-Path $root "windows"
-$pyinstallerSpec = Join-Path $windowsDir "build.spec"
-$installerScript = Join-Path $windowsDir "installer.nsi"
-$folderDist = Join-Path $distDir "CC-Desktop-Switch"
-$oneFileExe = Join-Path $distDir "CC-Desktop-Switch.exe"
-$setupExe = Join-Path $root "CC-Desktop-Switch-Setup-$Version.exe"
+$tauriReleaseDir = Join-Path $root "src-tauri\target\release"
 
 Set-Location $root
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
@@ -219,38 +252,21 @@ foreach ($pattern in @(
 }
 
 if ($Build) {
-    $env:CCDS_ONEFILE = ""
-    python -m PyInstaller --noconfirm --clean $pyinstallerSpec
-    $env:CCDS_ONEFILE = "1"
-    python -m PyInstaller --noconfirm --clean $pyinstallerSpec
-    Remove-Item Env:\CCDS_ONEFILE -ErrorAction SilentlyContinue
+    Invoke-TauriBuild -Arguments @("--no-bundle", "--no-sign", "--ci")
+    $builtExe = Get-TauriWindowsExecutable -TauriReleaseDir $tauriReleaseDir
+    Invoke-OptionalCodeSigning -Files @($builtExe)
+    Invoke-TauriBuild -Arguments @("--bundles", "nsis", "--no-sign", "--ci")
 }
 
-if (-not (Test-Path -LiteralPath $folderDist)) {
-    throw "Folder build not found: $folderDist"
-}
-if (-not (Test-Path -LiteralPath $oneFileExe)) {
-    throw "One-file exe not found: $oneFileExe"
+$tauriExe = Get-TauriWindowsExecutable -TauriReleaseDir $tauriReleaseDir
+if ($CodeSign -and -not $Build) {
+    Invoke-OptionalCodeSigning -Files @($tauriExe)
 }
 
 $licensePath = Join-Path $root "LICENSE.txt"
-if (Test-Path -LiteralPath $licensePath) {
-    Copy-Item -LiteralPath $licensePath -Destination (Join-Path $folderDist "LICENSE.txt") -Force
-}
-
-$folderExe = Join-Path $folderDist "CC-Desktop-Switch.exe"
-Invoke-OptionalCodeSigning -Files @($folderExe, $oneFileExe)
-
-if ($TryInstaller) {
-    $makensis = Get-Makensis
-    if ($makensis) {
-        & $makensis "/DROOT_DIR=$root" $installerScript
-        if ($LASTEXITCODE -ne 0) {
-            throw "NSIS failed with exit code $LASTEXITCODE"
-        }
-    } else {
-        Write-Warning "NSIS makensis not found. Skipping Setup installer generation."
-    }
+$tauriSetup = Get-TauriNsisInstaller -TauriReleaseDir $tauriReleaseDir
+if ($TryInstaller -and -not $tauriSetup) {
+    throw "Tauri NSIS installer not found under $(Join-Path $tauriReleaseDir "bundle\nsis")"
 }
 
 $keyDir = Join-Path $root ".release-signing"
@@ -259,16 +275,26 @@ $assets = [System.Collections.Generic.List[object]]::new()
 
 $portableZip = Join-Path $releaseDir "CC-Desktop-Switch-v$Version-Windows-Portable.zip"
 if (Test-Path -LiteralPath $portableZip) { Remove-Item -LiteralPath $portableZip -Force }
-Compress-Archive -Path (Join-Path $folderDist "*") -DestinationPath $portableZip -Force
+$portableStage = Join-Path $releaseDir "portable-windows-x64"
+if (Test-Path -LiteralPath $portableStage) {
+    Remove-Item -LiteralPath $portableStage -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $portableStage | Out-Null
+Copy-Item -LiteralPath $tauriExe -Destination (Join-Path $portableStage "CC Desktop Switch.exe") -Force
+if (Test-Path -LiteralPath $licensePath) {
+    Copy-Item -LiteralPath $licensePath -Destination (Join-Path $portableStage "LICENSE.txt") -Force
+}
+Compress-Archive -Path (Join-Path $portableStage "*") -DestinationPath $portableZip -Force
+Remove-Item -LiteralPath $portableStage -Recurse -Force
 Add-Asset -Assets $assets -Path $portableZip -PrivateKeyPath $privateKey
 
 $releaseExe = Join-Path $releaseDir "CC-Desktop-Switch-v$Version-Windows-x64.exe"
-Copy-Item -LiteralPath $oneFileExe -Destination $releaseExe -Force
+Copy-Item -LiteralPath $tauriExe -Destination $releaseExe -Force
 
 $releaseSetup = $null
-if (Test-Path -LiteralPath $setupExe) {
+if ($tauriSetup -and (Test-Path -LiteralPath $tauriSetup)) {
     $releaseSetup = Join-Path $releaseDir "CC-Desktop-Switch-v$Version-Windows-Setup.exe"
-    Copy-Item -LiteralPath $setupExe -Destination $releaseSetup -Force
+    Copy-Item -LiteralPath $tauriSetup -Destination $releaseSetup -Force
 }
 
 if ($CodeSign -and $releaseSetup -and (Test-Path -LiteralPath $releaseSetup)) {

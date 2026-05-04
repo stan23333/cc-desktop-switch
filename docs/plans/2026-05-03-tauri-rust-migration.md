@@ -19,7 +19,7 @@
 - Local Anthropic / OpenAI-compatible proxy and SSE streaming: `backend/proxy.py`.
 - API adapters and provider utilities: `backend/api_adapters.py`, `backend/provider_tools.py`, `backend/model_alias.py`, `backend/ccswitch_import.py`, `backend/update.py`.
 - Frontend: `frontend/index.html`, `frontend/js/app.js`, `frontend/js/api.js`, `frontend/js/i18n.js`, `frontend/css/style.css`.
-- Current packaging: `windows/build.spec`, `windows/installer.nsi`, `windows/build.bat`, `macos/make-pkg.sh`, `macos/make-dmg.sh`. The pre-Tauri macOS Python/PyInstaller app-build path was removed after v1.1.0 parity.
+- Current packaging: Windows release artifacts are built from Tauri/Rust output through `.github/workflows/release.yml` and `scripts/New-Release.ps1`; `windows/build.bat` is only a local helper. macOS release packaging builds the `.app` through Tauri and wraps it with `macos/make-pkg.sh` / `macos/make-dmg.sh`. The pre-Tauri macOS Python/PyInstaller app-build path was removed after v1.1.0 parity.
 - Tests: `tests/test_provider_config_and_proxy.py`.
 
 ## Recommended Target
@@ -50,13 +50,13 @@ The final steady state should be:
 - Create: `src/App.tsx`
 - Create: `src/main.tsx`
 - Create: `src/styles.css`
-- Keep: existing `main.py`, `backend/`, `frontend/`, `windows/build.spec`, and `windows/installer.nsi`
+- Keep: existing `main.py`, `backend/`, and `frontend/` until Python runtime retirement is explicitly started.
 
 **Steps:**
 1. Scaffold Tauri v2 in parallel so existing releases can continue from the Python app.
 2. Copy the current UI text and screen structure into `src/` without redesigning workflows.
 3. Add a `tauri:dev` command for local validation.
-4. Do not remove PyInstaller packaging in this phase.
+4. Do not remove the Python runtime in this phase.
 
 **Validation:**
 - `npm run tauri dev` opens the new app shell.
@@ -148,15 +148,15 @@ The final steady state should be:
 **Files:**
 - Modify: `.github/workflows/release.yml` if present in the target branch.
 - Modify: `scripts/New-Release.ps1`
-- Modify: `windows/installer.nsi` only if keeping NSIS outside Tauri Bundler.
+- Removed: hand-written `windows/installer.nsi`, because Windows NSIS output is now owned by Tauri Bundler.
 - Remove after parity: pre-Tauri macOS Python/PyInstaller app-build path.
 - Modify: `macos/make-pkg.sh`
 - Modify: `macos/make-dmg.sh`
 - Modify: `release/latest.json` generation flow if present locally or in CI.
 
 **Steps:**
-1. Decide whether to let Tauri Bundler own MSI / NSIS / DMG outputs or keep current NSIS and macOS wrapper scripts.
-2. Prefer Tauri Bundler for normal assets, but preserve current asset names so existing release documentation and update checks do not break.
+1. Let Tauri Bundler own the Windows NSIS output.
+2. Preserve current release asset names so existing release documentation and update checks do not break.
 3. Keep Windows current-user installation behavior and shortcuts.
 4. Keep macOS PKG and DMG assets, and keep `latest.json` platform keys compatible with the current updater.
 5. Do not commit generated `dist/`, `.dmg`, `.pkg`, `.exe`, or `.zip` artifacts.
@@ -171,7 +171,7 @@ The final steady state should be:
 **Files:**
 - Keep until the Windows compatibility path is replaced or intentionally retired: `main.py`
 - Keep until the Windows compatibility path is replaced or intentionally retired: `backend/`
-- Keep until the Windows compatibility path is replaced or intentionally retired: `windows/build.spec`
+- Removed after Windows release moved to Tauri artifacts: `windows/build.spec`
 - Keep until the Windows compatibility path is replaced or intentionally retired: `requirements.txt`
 - Removed after parity: `macos/build-macos.sh`, `macos/build-macos.spec`, `macos/prepare-icon.py`, and `macos/entitlements.plist`
 - Replace tests: `tests/test_provider_config_and_proxy.py` with Rust and frontend tests

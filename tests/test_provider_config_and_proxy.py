@@ -2483,26 +2483,34 @@ class DesktopTrayControllerTests(unittest.TestCase):
         self.assertIn("Kimi", message_box.call_args.args[1])
         self.assertIn("重新打开 Claude 桌面版", message_box.call_args.args[1])
 
-    def test_installer_uses_current_user_install_without_admin_prompt(self):
-        installer = Path(__file__).resolve().parents[1] / "windows" / "installer.nsi"
-        text = installer.read_text(encoding="utf-8")
+    def test_tauri_windows_installer_uses_current_user_install(self):
+        config_path = Path(__file__).resolve().parents[1] / "src-tauri" / "tauri.conf.json"
+        tauri_config = json.loads(config_path.read_text(encoding="utf-8"))
 
-        self.assertIn(r'!define PRODUCT_DIR "$LOCALAPPDATA\Programs\CC-Desktop-Switch"', text)
-        self.assertIn('InstallDirRegKey HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation"', text)
-        self.assertIn("RequestExecutionLevel user", text)
-        self.assertIn('ReadRegStr $R1 HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation"', text)
-        self.assertIn('taskkill /IM "CC-Desktop-Switch.exe" /T /F', text)
-        self.assertIn('WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation" "$INSTDIR"', text)
-        self.assertIn('CreateShortCut "$SMPROGRAMS\\${PRODUCT_NAME}\\${PRODUCT_NAME}.lnk"', text)
-        self.assertIn('CreateShortCut "$DESKTOP\\${PRODUCT_NAME}.lnk"', text)
-        self.assertNotIn("RequestExecutionLevel admin", text)
+        self.assertEqual(
+            tauri_config["bundle"]["windows"]["nsis"]["installMode"],
+            "currentUser",
+        )
 
-    def test_pyinstaller_windows_build_does_not_force_uac_admin(self):
-        spec = Path(__file__).resolve().parents[1] / "windows" / "build.spec"
-        text = spec.read_text(encoding="utf-8")
+    def test_windows_release_chain_uses_tauri_instead_of_pyinstaller(self):
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / ".github" / "workflows" / "release.yml").read_text(
+            encoding="utf-8"
+        )
+        release_script = (root / "scripts" / "New-Release.ps1").read_text(
+            encoding="utf-8"
+        )
 
-        self.assertIn("uac_admin=False", text)
-        self.assertNotIn("uac_admin=True", text)
+        self.assertIn("pnpm install --frozen-lockfile", workflow)
+        self.assertIn("dtolnay/rust-toolchain@stable", workflow)
+        self.assertIn("Invoke-TauriBuild", release_script)
+        self.assertIn('"--bundles", "nsis"', release_script)
+        self.assertIn("CC-Desktop-Switch-v$Version-Windows-Portable.zip", release_script)
+        self.assertIn("CC-Desktop-Switch-v$Version-Windows-Setup.exe", release_script)
+        self.assertNotIn("actions/setup-python", workflow)
+        self.assertNotIn("requirements.txt", workflow)
+        self.assertNotIn("PyInstaller", release_script)
+        self.assertNotIn("windows/build.spec", release_script)
 
 
 class FeedbackApiTests(unittest.TestCase):
