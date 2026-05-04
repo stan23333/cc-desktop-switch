@@ -3,9 +3,9 @@
 CC Desktop Switch - PyInstaller 构建配置
 
 使用方法：
-    pyinstaller build.spec                    # 文件夹模式（启动快）
-    set CCDS_ONEFILE=1 && pyinstaller build.spec  # 单文件 exe（便携）
-    set CCDS_CONSOLE=1 && pyinstaller build.spec  # 调试时显示控制台
+    pyinstaller windows/build.spec                    # 文件夹模式（启动快）
+    set CCDS_ONEFILE=1 && pyinstaller windows/build.spec  # 单文件 exe（便携）
+    set CCDS_CONSOLE=1 && pyinstaller windows/build.spec  # 调试时显示控制台
 
 输出：
     dist/CC-Desktop-Switch/        ← 文件夹模式
@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
-ROOT = Path(SPECPATH)
+ROOT = Path(SPECPATH).parent
 FRONTEND = ROOT / "frontend"
 ONEFILE = os.environ.get("CCDS_ONEFILE") == "1"
 CONSOLE = os.environ.get("CCDS_CONSOLE") == "1"

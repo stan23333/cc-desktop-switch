@@ -102,7 +102,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v$env:RELEASE_VERSION"
-          $notesPath = "docs\release-notes-v$env:RELEASE_VERSION.md"
+          $notesPath = "docs\releases\v$env:RELEASE_VERSION.md"
           if (Test-Path -LiteralPath $notesPath) {
             $notesArgs = @("--notes-file", $notesPath)
           } else {

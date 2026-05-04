@@ -197,6 +197,9 @@ function Invoke-OptionalCodeSigning {
 $root = Get-ProjectRoot
 $releaseDir = Join-Path $root $OutputDir
 $distDir = Join-Path $root "dist"
+$windowsDir = Join-Path $root "windows"
+$pyinstallerSpec = Join-Path $windowsDir "build.spec"
+$installerScript = Join-Path $windowsDir "installer.nsi"
 $folderDist = Join-Path $distDir "CC-Desktop-Switch"
 $oneFileExe = Join-Path $distDir "CC-Desktop-Switch.exe"
 $setupExe = Join-Path $root "CC-Desktop-Switch-Setup-$Version.exe"
@@ -217,9 +220,9 @@ foreach ($pattern in @(
 
 if ($Build) {
     $env:CCDS_ONEFILE = ""
-    python -m PyInstaller --noconfirm --clean build.spec
+    python -m PyInstaller --noconfirm --clean $pyinstallerSpec
     $env:CCDS_ONEFILE = "1"
-    python -m PyInstaller --noconfirm --clean build.spec
+    python -m PyInstaller --noconfirm --clean $pyinstallerSpec
     Remove-Item Env:\CCDS_ONEFILE -ErrorAction SilentlyContinue
 }
 
@@ -241,7 +244,7 @@ Invoke-OptionalCodeSigning -Files @($folderExe, $oneFileExe)
 if ($TryInstaller) {
     $makensis = Get-Makensis
     if ($makensis) {
-        & $makensis installer.nsi
+        & $makensis "/DROOT_DIR=$root" $installerScript
         if ($LASTEXITCODE -ne 0) {
             throw "NSIS failed with exit code $LASTEXITCODE"
         }

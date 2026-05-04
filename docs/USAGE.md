@@ -28,7 +28,7 @@ CC-Desktop-Switch-v<最新版本>-Windows-Portable.zip
 
 便携版解压后直接运行里面的 `CC-Desktop-Switch.exe`。它不会写入安装记录，也不会自动创建桌面或开始菜单快捷方式；如果想固定入口，请手动为解压后的 exe 创建快捷方式。
 
-macOS 版本由 macOS 维护者单独同步。如果 Release 页面出现对应的 DMG 或 PKG，DMG 打开后把应用拖到“应用程序”；PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。
+macOS 用户可以下载 Release 页面里的 DMG 或 PKG。DMG 打开后把应用拖到“应用程序”；PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。
 
 启动后会打开一个桌面窗口。浏览器地址只是备用入口：
 

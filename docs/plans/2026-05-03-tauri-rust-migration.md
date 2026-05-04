@@ -19,7 +19,7 @@
 - Local Anthropic / OpenAI-compatible proxy and SSE streaming: `backend/proxy.py`.
 - API adapters and provider utilities: `backend/api_adapters.py`, `backend/provider_tools.py`, `backend/model_alias.py`, `backend/ccswitch_import.py`, `backend/update.py`.
 - Frontend: `frontend/index.html`, `frontend/js/app.js`, `frontend/js/api.js`, `frontend/js/i18n.js`, `frontend/css/style.css`.
-- Current packaging: `build.spec`, `installer.nsi`, `build.bat`, `macos/build-macos.spec`, `macos/build-macos.sh`, `macos/make-pkg.sh`, `macos/make-dmg.sh`.
+- Current packaging: `windows/build.spec`, `windows/installer.nsi`, `windows/build.bat`, `macos/make-pkg.sh`, `macos/make-dmg.sh`. The pre-Tauri macOS Python/PyInstaller app-build path was removed after v1.1.0 parity.
 - Tests: `tests/test_provider_config_and_proxy.py`.
 
 ## Recommended Target
@@ -50,7 +50,7 @@ The final steady state should be:
 - Create: `src/App.tsx`
 - Create: `src/main.tsx`
 - Create: `src/styles.css`
-- Keep: existing `main.py`, `backend/`, `frontend/`, `build.spec`, and `installer.nsi`
+- Keep: existing `main.py`, `backend/`, `frontend/`, `windows/build.spec`, and `windows/installer.nsi`
 
 **Steps:**
 1. Scaffold Tauri v2 in parallel so existing releases can continue from the Python app.
@@ -148,8 +148,8 @@ The final steady state should be:
 **Files:**
 - Modify: `.github/workflows/release.yml` if present in the target branch.
 - Modify: `scripts/New-Release.ps1`
-- Modify: `installer.nsi` only if keeping NSIS outside Tauri Bundler.
-- Modify: `macos/build-macos.sh`
+- Modify: `windows/installer.nsi` only if keeping NSIS outside Tauri Bundler.
+- Remove after parity: pre-Tauri macOS Python/PyInstaller app-build path.
 - Modify: `macos/make-pkg.sh`
 - Modify: `macos/make-dmg.sh`
 - Modify: `release/latest.json` generation flow if present locally or in CI.
@@ -169,11 +169,11 @@ The final steady state should be:
 ### Phase 7: Retire Python only after parity
 
 **Files:**
-- Remove after parity: `main.py`
-- Remove after parity: `backend/`
-- Remove after parity: `build.spec`
-- Remove after parity: `requirements.txt`
-- Remove after parity: `macos/build-macos.spec`
+- Keep until the Windows compatibility path is replaced or intentionally retired: `main.py`
+- Keep until the Windows compatibility path is replaced or intentionally retired: `backend/`
+- Keep until the Windows compatibility path is replaced or intentionally retired: `windows/build.spec`
+- Keep until the Windows compatibility path is replaced or intentionally retired: `requirements.txt`
+- Removed after parity: `macos/build-macos.sh`, `macos/build-macos.spec`, `macos/prepare-icon.py`, and `macos/entitlements.plist`
 - Replace tests: `tests/test_provider_config_and_proxy.py` with Rust and frontend tests
 - Update: `README.md`
 - Update: `docs/USAGE.md`

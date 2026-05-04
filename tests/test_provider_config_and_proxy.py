@@ -2484,7 +2484,7 @@ class DesktopTrayControllerTests(unittest.TestCase):
         self.assertIn("重新打开 Claude 桌面版", message_box.call_args.args[1])
 
     def test_installer_uses_current_user_install_without_admin_prompt(self):
-        installer = Path(__file__).resolve().parents[1] / "installer.nsi"
+        installer = Path(__file__).resolve().parents[1] / "windows" / "installer.nsi"
         text = installer.read_text(encoding="utf-8")
 
         self.assertIn(r'!define PRODUCT_DIR "$LOCALAPPDATA\Programs\CC-Desktop-Switch"', text)
@@ -2498,7 +2498,7 @@ class DesktopTrayControllerTests(unittest.TestCase):
         self.assertNotIn("RequestExecutionLevel admin", text)
 
     def test_pyinstaller_windows_build_does_not_force_uac_admin(self):
-        spec = Path(__file__).resolve().parents[1] / "build.spec"
+        spec = Path(__file__).resolve().parents[1] / "windows" / "build.spec"
         text = spec.read_text(encoding="utf-8")
 
         self.assertIn("uac_admin=False", text)

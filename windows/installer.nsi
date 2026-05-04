@@ -3,9 +3,13 @@
 ;============================================
 ;  Prerequisites:
 ;     1. Install NSIS 3.0+
-;     2. Run: makensis installer.nsi
+;     2. Run from repository root: makensis /DROOT_DIR=%CD% windows\installer.nsi
 ;     3. Output: CC-Desktop-Switch-Setup-1.1.0.exe
 ;============================================
+
+!ifndef ROOT_DIR
+  !define ROOT_DIR "${__FILEDIR__}\.."
+!endif
 
 !define PRODUCT_NAME "CC Desktop Switch"
 !define PRODUCT_VERSION "1.1.0"
@@ -31,7 +35,7 @@ RequestExecutionLevel user
 !endif
 
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "LICENSE.txt"
+!insertmacro MUI_PAGE_LICENSE "${ROOT_DIR}\LICENSE.txt"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_RUN "$INSTDIR\CC-Desktop-Switch.exe"
@@ -74,7 +78,7 @@ Section "Main" SEC01
     SetOutPath "$INSTDIR"
     SetOverwrite ifnewer
 
-    File /r "dist\CC-Desktop-Switch\*.*"
+    File /r "${ROOT_DIR}\dist\CC-Desktop-Switch\*.*"
 
     CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
     CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\${PRODUCT_NAME}.lnk" "$INSTDIR\CC-Desktop-Switch.exe"

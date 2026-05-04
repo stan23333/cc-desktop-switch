@@ -5,7 +5,7 @@ echo    CC Desktop Switch v1.1.0
 echo    正在启动管理后台...
 echo ========================================
 
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 REM 检查 Python
 python --version >nul 2>&1

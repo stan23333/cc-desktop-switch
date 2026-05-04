@@ -15,7 +15,7 @@ v1.1.0 起，桌面运行时迁移到 **Tauri + Rust**，保留原有 HTML/CSS/J
 
 Windows 和 macOS 稳定路径默认使用直连配置：完成“一键应用”并重启 Claude Desktop 后，即使关闭本工具，Claude Desktop 仍可以继续使用当前供应商。OpenAI / new-api / 反代类接口属于实验兼容路径，必要时才使用本机转发服务。
 
-macOS 版本由 macOS 维护者单独同步；Linux 可以运行管理后台和代理，但 Claude Desktop 没有对应 GUI 版本。
+macOS 提供独立 App、PKG 和 DMG 产物；Linux 可以运行管理后台和代理，但 Claude Desktop 没有对应 GUI 版本。
 
 ## 界面预览
 
@@ -188,27 +188,35 @@ Security and limits:
 
 ## 本地开发
 
-```powershell
+Tauri/Rust 桌面版是当前主路径：
+
+```bash
 git clone https://github.com/lonr-6/cc-desktop-switch.git
 cd cc-desktop-switch
-pip install -r requirements.txt
-python main.py
+pnpm install
+pnpm tauri dev
 ```
 
-默认会打开桌面窗口。调试时也可以用浏览器模式：
+Python 路径仍保留给 Windows 兼容打包和回退验证：
 
 ```powershell
+pip install -r requirements.txt
 python main.py --browser
 ```
 
+Windows 兼容打包入口已整理到 `windows/`，发布脚本仍由 `scripts/New-Release.ps1` 调用。
+
 ## 验证
 
-```powershell
+```bash
+pnpm build
+cargo check --manifest-path src-tauri/Cargo.toml
 python -m compileall -q backend main.py
 python -m unittest discover -s tests -v
 node --check frontend/js/api.js
 node --check frontend/js/app.js
 node --check frontend/js/i18n.js
+node --check src/originalApiBridge.js
 ```
 
 ## Troubleshooting

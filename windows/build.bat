@@ -33,7 +33,7 @@ echo ========================================
 echo  正在打包 (%MODE%)...
 echo ========================================
 
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 REM 检查 Python
 python --version >nul 2>&1
@@ -64,7 +64,7 @@ echo [2/3] 正在打包...
 
 if "%MODE%"=="onefile" (
     set CCDS_ONEFILE=1
-    python -m PyInstaller --noconfirm --clean build.spec >nul 2>&1
+    python -m PyInstaller --noconfirm --clean windows\build.spec >nul 2>&1
     set CCDS_ONEFILE=
     if %errorlevel% equ 0 (
         echo  单文件 exe 打包成功！
@@ -77,7 +77,7 @@ if "%MODE%"=="onefile" (
 
 if "%MODE%"=="folder" (
     set CCDS_ONEFILE=
-    python -m PyInstaller --noconfirm --clean build.spec >nul 2>&1
+    python -m PyInstaller --noconfirm --clean windows\build.spec >nul 2>&1
     if %errorlevel% equ 0 (
         echo  文件夹模式打包成功！
     ) else (
@@ -89,7 +89,7 @@ if "%MODE%"=="folder" (
 
 if "%MODE%"=="zip" (
     set CCDS_ONEFILE=
-    python -m PyInstaller --noconfirm --clean build.spec >nul 2>&1
+    python -m PyInstaller --noconfirm --clean windows\build.spec >nul 2>&1
     if %errorlevel% equ 0 (
         powershell Compress-Archive -Path "dist\CC-Desktop-Switch\*" -DestinationPath "CC-Desktop-Switch.zip" -Force >nul 2>&1
         echo  ZIP 打包成功！
@@ -103,7 +103,7 @@ if "%MODE%"=="zip" (
 if "%MODE%"=="installer" (
     REM 先打文件夹
     set CCDS_ONEFILE=
-    python -m PyInstaller --noconfirm --clean build.spec >nul 2>&1
+    python -m PyInstaller --noconfirm --clean windows\build.spec >nul 2>&1
     if %errorlevel% neq 0 (
         echo [错误] PyInstaller 打包失败
         pause
@@ -121,13 +121,13 @@ if "%MODE%"=="installer" (
         echo    https://nsis.sourceforge.io/Download
         echo.
         echo  安装后确保 makensis.exe 在 PATH 中
-        echo  或手动执行: makensis installer.nsi
+        echo  或手动执行: makensis /DROOT_DIR=%%CD%% windows\installer.nsi
         echo.
         pause
         exit /b 1
     )
 
-    makensis installer.nsi >nul 2>&1
+    makensis "/DROOT_DIR=%CD%" windows\installer.nsi >nul 2>&1
     if %errorlevel% equ 0 (
         echo  Setup 安装包制作成功！
     ) else (
