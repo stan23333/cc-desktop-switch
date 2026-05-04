@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from backend import main as backend_main
 from backend.main import (
     _desktop_health,
     _test_provider_connection,
@@ -34,6 +35,7 @@ from backend.proxy import (
     build_upstream_url,
     create_proxy_app,
     gateway_models_response,
+    log_buffer as proxy_log_buffer,
     map_model,
 )
 
@@ -156,8 +158,11 @@ class ProviderConfigTests(unittest.TestCase):
             "deepseek": "https://api.deepseek.com/anthropic",
             "kimi": "https://api.moonshot.cn/anthropic",
             "kimi-code": "https://api.kimi.com/coding",
+            "xiaomi-mimo-payg": "https://api.xiaomimimo.com/anthropic",
+            "xiaomi-mimo-token-plan": "https://token-plan-cn.xiaomimimo.com/anthropic",
             "zhipu": "https://open.bigmodel.cn/api/anthropic",
             "bailian": "https://dashscope.aliyuncs.com/apps/anthropic",
+            "bailian-token-plan": "https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic",
         }
 
         for preset_id, base_url in expected_urls.items():
@@ -168,10 +173,17 @@ class ProviderConfigTests(unittest.TestCase):
 
         self.assertEqual(presets["kimi"]["models"]["default"], "kimi-k2.6")
         self.assertEqual(presets["kimi-code"]["models"]["default"], "kimi-for-coding")
+        self.assertIn("third-party", presets)
+        self.assertEqual(presets["third-party"]["baseUrl"], "")
+        self.assertIn("third_party_max_effort", presets["third-party"]["requestOptionPresets"])
+        self.assertEqual(presets["xiaomi-mimo-payg"]["models"]["default"], "mimo-v2.5-pro")
+        self.assertEqual(presets["xiaomi-mimo-token-plan"]["models"]["default"], "mimo-v2.5-pro")
+        self.assertEqual(len(presets["xiaomi-mimo-token-plan"]["baseUrlOptions"]), 3)
         self.assertEqual(presets["zhipu"]["models"]["haiku"], "glm-4.7")
         self.assertNotIn("qiniu", presets)
         self.assertNotIn("siliconflow", presets)
         self.assertEqual(presets["bailian"]["modelCapabilities"], {})
+        self.assertEqual(presets["bailian-token-plan"]["authScheme"], "bearer")
         qwen_1m = presets["bailian"]["modelOptions"]["qwen_1m"]
         self.assertIn("开启千问 1M 上下文", qwen_1m["label"])
         self.assertTrue(qwen_1m["modelCapabilities"]["qwen3.6-plus"]["supports1m"])
@@ -1167,8 +1179,7 @@ class ProviderToolsTests(unittest.TestCase):
         suggested = provider_tools.suggest_model_mappings(models)
 
         self.assertEqual(models, ["text-embedding-v1", "deepseek-v4-pro", "deepseek-v4-flash"])
-        self.assertEqual(suggested["sonnet"], "deepseek-v4-pro")
-        self.assertEqual(suggested["haiku"], "deepseek-v4-flash")
+        self.assertEqual(set(suggested), {"default"})
         self.assertEqual(suggested["default"], "deepseek-v4-pro")
 
     def test_normalize_openrouter_usage(self):
@@ -1178,6 +1189,13 @@ class ProviderToolsTests(unittest.TestCase):
 
         self.assertEqual(items[0]["remaining"], 10.5)
         self.assertEqual(items[0]["used"], 2.0)
+
+    def test_provider_auth_error_message_is_actionable(self):
+        message = provider_tools._auth_error_message(401, "Invalid API Key")
+
+        self.assertIn("API Key 不可用", message)
+        self.assertIn("Invalid API Key", message)
+        self.assertIn("Base URL/地区", message)
 
 
 class AdminApiTests(unittest.TestCase):
@@ -1271,8 +1289,10 @@ class AdminApiTests(unittest.TestCase):
         popen.assert_called_once()
         command = popen.call_args.args[0]
         self.assertEqual(command[:2], ["/bin/sh", "-c"])
+        self.assertIn('application id "com.anthropic.claudefordesktop" is running', command[2])
         self.assertIn("com.anthropic.claudefordesktop", command[2])
         self.assertTrue(popen.call_args.kwargs["detached"])
+        self.assertIn("打开或重启", response.json()["message"])
 
     def test_autofill_models_route_updates_provider_mapping(self):
         provider = cfg.add_provider({
@@ -1280,6 +1300,11 @@ class AdminApiTests(unittest.TestCase):
             "baseUrl": "https://api.moonshot.cn/v1",
             "authScheme": "bearer",
             "apiFormat": "openai",
+            "models": {
+                "default": "old-default",
+                "sonnet": "manual-sonnet",
+                "haiku": "manual-haiku",
+            },
         })
 
         async def fake_fetch(_provider):
@@ -1287,12 +1312,7 @@ class AdminApiTests(unittest.TestCase):
                 "success": True,
                 "endpoint": "https://api.moonshot.cn/v1/models",
                 "models": ["kimi-k2.6"],
-                "suggested": {
-                    "sonnet": "kimi-k2.6",
-                    "haiku": "kimi-k2.6",
-                    "opus": "kimi-k2.6",
-                    "default": "kimi-k2.6",
-                },
+                "suggested": {"default": "kimi-k2.6"},
             }
 
         with patch("backend.main.provider_tools.fetch_provider_models", fake_fetch):
@@ -1302,7 +1322,11 @@ class AdminApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(cfg.get_provider(provider["id"])["models"]["default"], "kimi-k2.6")
+        saved_models = cfg.get_provider(provider["id"])["models"]
+        self.assertEqual(response.json()["suggested"], {"default": "kimi-k2.6"})
+        self.assertEqual(saved_models["default"], "kimi-k2.6")
+        self.assertEqual(saved_models["sonnet_4_6"], "manual-sonnet")
+        self.assertEqual(saved_models["haiku_4_5"], "manual-haiku")
 
     def test_fetch_models_from_unsaved_provider_payload(self):
         async def fake_fetch(provider):
@@ -1311,12 +1335,7 @@ class AdminApiTests(unittest.TestCase):
                 "success": True,
                 "endpoint": "https://api.example.com/v1/models",
                 "models": ["example-pro"],
-                "suggested": {
-                    "sonnet": "example-pro",
-                    "haiku": "example-pro",
-                    "opus": "example-pro",
-                    "default": "example-pro",
-                },
+                "suggested": {"default": "example-pro"},
             }
 
         with patch("backend.main.provider_tools.fetch_provider_models", fake_fetch):
@@ -1333,9 +1352,10 @@ class AdminApiTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(response.json()["suggested"]), {"default"})
         self.assertEqual(response.json()["suggested"]["default"], "example-pro")
 
-    def test_provider_connection_marks_auth_failure_as_not_ok(self):
+    def test_provider_connection_only_checks_url_reachability(self):
         class FakeResponse:
             def __init__(self, status_code=401):
                 self.status_code = status_code
@@ -1366,13 +1386,13 @@ class AdminApiTests(unittest.TestCase):
             }))
 
         self.assertTrue(result["success"])
-        self.assertFalse(result["ok"])
+        self.assertTrue(result["ok"])
         self.assertEqual(result["statusCode"], 401)
-        self.assertIn("Kimi 认证失败", result["message"])
-        self.assertIn("https://api.moonshot.cn/anthropic", result["message"])
-        self.assertIn("https://api.kimi.com/coding", result["message"])
+        self.assertIn("服务器连接成功", result["message"])
+        self.assertNotIn("HTTP", result["message"])
+        self.assertNotIn("API Key", result["message"])
 
-    def test_provider_connection_probes_post_when_head_and_get_are_not_supported(self):
+    def test_provider_connection_does_not_spend_model_request_on_ping(self):
         calls = []
 
         class FakeResponse:
@@ -1397,10 +1417,6 @@ class AdminApiTests(unittest.TestCase):
                 calls.append(("get", args, kwargs))
                 return FakeResponse(404)
 
-            async def post(self, *args, **kwargs):
-                calls.append(("post", args, kwargs))
-                return FakeResponse(401)
-
         with patch("backend.main.httpx.AsyncClient", FakeClient):
             result = asyncio.run(_test_provider_connection({
                 "name": "Kimi",
@@ -1411,11 +1427,12 @@ class AdminApiTests(unittest.TestCase):
                 "models": {"default": "kimi-k2.6"},
             }))
 
-        self.assertEqual([call[0] for call in calls], ["head", "get", "post"])
-        self.assertEqual(calls[-1][2]["json"]["model"], "kimi-k2.6")
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["statusCode"], 401)
-        self.assertIn("Kimi 认证失败", result["message"])
+        self.assertEqual([call[0] for call in calls], ["head", "get"])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["statusCode"], 404)
+        self.assertIn("服务器连接成功", result["message"])
+        self.assertNotIn("HTTP", result["message"])
+        self.assertNotIn("获取模型", result["message"])
 
     def test_usage_route_returns_normalized_provider_tools_result(self):
         provider = cfg.add_provider({
@@ -2488,9 +2505,138 @@ class DesktopTrayControllerTests(unittest.TestCase):
         self.assertNotIn("uac_admin=True", text)
 
 
+class FeedbackApiTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.old_config_dir = cfg.CONFIG_DIR
+        self.old_config_file = cfg.CONFIG_FILE
+        self.old_backup_dir = cfg.BACKUP_DIR
+        cfg.CONFIG_DIR = self.temp_dir.name
+        cfg.CONFIG_FILE = os.path.join(self.temp_dir.name, "config.json")
+        cfg.BACKUP_DIR = os.path.join(self.temp_dir.name, "backups")
+        cfg.save_config(copy.deepcopy(cfg.DEFAULT_CONFIG))
+        backend_main._feedback_throttle = backend_main._FeedbackThrottle()
+        proxy_log_buffer.clear()
+
+    def tearDown(self):
+        cfg.CONFIG_DIR = self.old_config_dir
+        cfg.CONFIG_FILE = self.old_config_file
+        cfg.BACKUP_DIR = self.old_backup_dir
+        backend_main._feedback_throttle = backend_main._FeedbackThrottle()
+        proxy_log_buffer.clear()
+        self.temp_dir.cleanup()
+
+    def test_feedback_route_forwards_to_worker_with_sanitized_diagnostics(self):
+        class FakeResponse:
+            status_code = 200
+            is_success = True
+            headers = {"content-type": "application/json"}
+
+            def json(self):
+                return {"ok": True, "id": "fb-test", "email_sent": False}
+
+        class FakeAsyncClient:
+            submitted_url = None
+            submitted_files = None
+
+            def __init__(self, timeout):
+                self.timeout = timeout
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def post(self, url, files):
+                type(self).submitted_url = url
+                type(self).submitted_files = files
+                return FakeResponse()
+
+        cfg.add_provider({
+            "name": "Secret Provider",
+            "baseUrl": "https://secret.example/anthropic",
+            "apiKey": "sk-secret-value",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+        })
+        proxy_log_buffer.add("INFO", "转发请求 -> https://secret.example/anthropic sk-secret-value")
+
+        client = TestClient(create_admin_app())
+        with patch("backend.main.httpx.AsyncClient", FakeAsyncClient):
+            response = client.post(
+                "/api/feedback",
+                json={
+                    "title": "问题标题",
+                    "body": "详细描述",
+                    "include_diagnostics": True,
+                    "attachments": [
+                        {
+                            "kind": "log",
+                            "name": "client.log",
+                            "content_type": "text/plain",
+                            "content_b64": "bG9n",
+                        }
+                    ],
+                },
+                headers={"X-CCDS-Request": "1"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], "fb-test")
+        self.assertEqual(FakeAsyncClient.submitted_url, backend_main.FEEDBACK_WORKER_URL)
+
+        files = FakeAsyncClient.submitted_files
+        by_name = {field: payload for field, payload in files}
+        meta = json.loads(by_name["meta"][1])
+        self.assertEqual(meta["app"], "cc-desktop-switch")
+        self.assertEqual(meta["active_provider_name"], "Secret Provider")
+        self.assertNotIn("apiKey", json.dumps(meta))
+        self.assertNotIn("baseUrl", json.dumps(meta))
+
+        proxy_tail = by_name["log_proxy_tail"][1].decode("utf-8")
+        self.assertIn("[URL]", proxy_tail)
+        self.assertIn("[API_KEY]", proxy_tail)
+        self.assertNotIn("secret.example", proxy_tail)
+        self.assertNotIn("sk-secret-value", proxy_tail)
+        self.assertIn("log0", by_name)
+
+
 class StaticFrontendTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(__file__).resolve().parents[1]
+
+    def test_feedback_ui_backend_and_tauri_bridge_are_wired(self):
+        html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")
+        css = (self.root / "frontend" / "css" / "style.css").read_text(encoding="utf-8")
+        app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        api_js = (self.root / "frontend" / "js" / "api.js").read_text(encoding="utf-8")
+        i18n = (self.root / "frontend" / "js" / "i18n.js").read_text(encoding="utf-8")
+        backend_main_text = (self.root / "backend" / "main.py").read_text(encoding="utf-8")
+        tauri_bridge = (self.root / "src" / "originalApiBridge.js").read_text(encoding="utf-8")
+        tauri_lib = (self.root / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
+        tauri_feedback = (self.root / "src-tauri" / "src" / "feedback.rs").read_text(encoding="utf-8")
+        tauri_cargo = (self.root / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8")
+
+        self.assertIn('data-action="open-feedback"', html)
+        self.assertIn('id="feedbackModal"', html)
+        self.assertIn('id="feedbackDropzone"', html)
+        self.assertIn('id="feedbackIncludeDiagnostics"', html)
+        self.assertIn("dashboard-feedback-button", css + html)
+        self.assertIn("feedback-dropzone", css)
+        self.assertIn("openFeedbackModal", app_js)
+        self.assertIn("bindFeedbackEvents()", app_js)
+        self.assertIn("fileToBase64", app_js)
+        self.assertIn("CCApi.submitFeedback", app_js)
+        self.assertIn("submitFeedback(payload)", api_js)
+        self.assertIn("/api/feedback", api_js + backend_main_text)
+        self.assertIn("codex-app-transfer-feedback.alysechencn.workers.dev", backend_main_text + tauri_feedback)
+        self.assertIn("submit_feedback", tauri_bridge + tauri_lib + tauri_feedback)
+        self.assertIn('base64 = "0.22"', tauri_cargo)
+        self.assertIn('"multipart"', tauri_cargo)
+        self.assertIn("sanitize_feedback_log_text", backend_main_text + tauri_feedback)
+        self.assertIn("feedback.successToast", i18n)
+        self.assertIn("feedback.failToast", i18n)
 
     def test_model_mapping_is_integrated_into_provider_form(self):
         html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")
@@ -2522,14 +2668,21 @@ class StaticFrontendTests(unittest.TestCase):
         app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
         api_js = (self.root / "frontend" / "js" / "api.js").read_text(encoding="utf-8")
         i18n = (self.root / "frontend" / "js" / "i18n.js").read_text(encoding="utf-8")
+        tauri_macos = (self.root / "src-tauri" / "src" / "desktop" / "macos.rs").read_text(encoding="utf-8")
+        tauri_windows = (self.root / "src-tauri" / "src" / "desktop" / "windows.rs").read_text(encoding="utf-8")
 
         self.assertIn('data-action="restart-claude"', html)
         self.assertIn('id="restartReminderNow"', html)
         self.assertIn("restartClaudeDesktop", api_js)
         self.assertIn("/api/desktop/restart", api_js)
         self.assertIn("restartClaudeDesktopFromUi", app_js)
+        self.assertIn("confirmRestartClaudeAfterEnable", app_js)
+        self.assertIn("await confirmRestartClaudeAfterEnable();", app_js)
         self.assertIn("confirm.restartClaude", app_js + i18n)
+        self.assertIn("confirm.restartClaudeAfterEnable", app_js + i18n)
         self.assertIn("restartReminder.restartNow", html + i18n)
+        self.assertIn("is running", tauri_macos)
+        self.assertIn("if ($processes)", tauri_windows)
 
     def test_provider_add_presets_and_guide_copy_are_user_facing(self):
         html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")
@@ -2596,6 +2749,46 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn('data-action="toggle-model-menu-mode"', html)
         self.assertIn("renderModelMenuModeState", app_js)
         self.assertIn("providers.showAllModels", i18n)
+
+    def test_one_click_apply_preserves_proxy_requirement_and_reports_invalid_form(self):
+        app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        api_js = (self.root / "frontend" / "js" / "api.js").read_text(encoding="utf-8")
+        tauri_bridge = (self.root / "src" / "originalApiBridge.js").read_text(encoding="utf-8")
+        i18n = (self.root / "frontend" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+        self.assertIn('showToast(t("toast.formInvalid"))', app_js)
+        self.assertIn('showToast(t("toast.providerApplyingDesktop"))', app_js)
+        self.assertIn('if (desktopResult.requiresProxy)', app_js)
+        self.assertIn("toast.formInvalid", i18n)
+        self.assertIn("toast.providerApplyingDesktop", i18n)
+        self.assertIn("const applyResult = await api('POST', '/api/desktop/configure');", api_js)
+        self.assertIn("return { ...status, ...applyResult };", api_js)
+        self.assertIn("const applyResult = await call('configure_desktop');", tauri_bridge)
+        self.assertIn("return { ...status, ...applyResult };", tauri_bridge)
+
+    def test_tauri_uses_in_app_confirm_modal_instead_of_native_confirm(self):
+        html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")
+        app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        i18n = (self.root / "frontend" / "js" / "i18n.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="confirmModal"', html)
+        self.assertIn('id="confirmModalBody"', html)
+        self.assertIn('id="confirmModalConfirm"', html)
+        self.assertIn("function confirmAction(message)", app_js)
+        self.assertIn("new bootstrap.Modal($(\"#confirmModal\"))", app_js)
+        self.assertIn("await confirmAction(t(\"confirm.providerApplyDesktop\"))", app_js)
+        self.assertNotIn("window.confirm(t(", app_js)
+        self.assertIn("common.confirm", i18n)
+        self.assertIn("confirm.title", i18n)
+
+    def test_fetch_models_only_updates_default_mapping_in_provider_form(self):
+        app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("function applyFetchedDefaultMapping(suggested = {}, availableModels = [])", app_js)
+        self.assertIn("const nextMappings = { ...providerFormMappings };", app_js)
+        self.assertIn("nextMappings.default = defaultModel;", app_js)
+        self.assertIn("applyFetchedDefaultMapping(result.suggested || {}, providerAvailableModels);", app_js)
+        self.assertNotIn("setProviderMappings(result.suggested || emptyMappings()", app_js)
 
     def test_third_party_compatibility_ui_is_folded_and_marked_experimental(self):
         html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")

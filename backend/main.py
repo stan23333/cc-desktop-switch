@@ -1,8 +1,11 @@
 """FastAPI 应用 - 管理 API + 静态文件服务"""
 
 import asyncio
+import base64
 import json
 import os
+import platform
+import re
 import socket
 import subprocess
 import sys
@@ -25,7 +28,6 @@ from backend import provider_tools
 from backend import registry
 from backend import update as updater
 from backend.api_adapters import normalize_api_format
-from backend.model_alias import provider_model_ids
 from backend.proxy import (
     build_upstream_url,
     create_proxy_app,
@@ -39,6 +41,64 @@ from backend.proxy import (
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 _update_quit_handler: Optional[Callable[[], None]] = None
 _window_show_handler: Optional[Callable[[], bool]] = None
+
+# 用户反馈 Worker(Cloudflare)。按 codex-app-transfer 的完整反馈配置转发。
+FEEDBACK_WORKER_URL = "https://codex-app-transfer-feedback.alysechencn.workers.dev"
+
+
+class _FeedbackThrottle:
+    """进程内反馈节流，避免用户误连点或失败循环刷请求。"""
+
+    SUCCESS_COOLDOWN_S = 60
+    FAILURE_WINDOW_S = 300
+    FAILURE_LIMIT = 5
+    FAILURE_COOLDOWN_S = 60
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._last_success_ts = 0.0
+        self._failure_ts: list[float] = []
+        self._failure_cooldown_until = 0.0
+
+    def acquire(self) -> dict:
+        with self._lock:
+            now = time.time()
+            since_success = now - self._last_success_ts
+            if 0 < since_success < self.SUCCESS_COOLDOWN_S:
+                wait = int(self.SUCCESS_COOLDOWN_S - since_success)
+                return {"ok": False, "reason": f"刚提交成功,请等 {wait} 秒后再发新反馈"}
+
+            if now < self._failure_cooldown_until:
+                wait = int(self._failure_cooldown_until - now)
+                return {"ok": False, "reason": f"连续提交失败次数过多,请等 {wait} 秒后再试"}
+
+            self._failure_ts = [ts for ts in self._failure_ts if now - ts < self.FAILURE_WINDOW_S]
+            return {"ok": True}
+
+    def record_success(self):
+        with self._lock:
+            self._last_success_ts = time.time()
+            self._failure_ts.clear()
+            self._failure_cooldown_until = 0.0
+
+    def record_failure(self):
+        with self._lock:
+            now = time.time()
+            self._failure_ts = [ts for ts in self._failure_ts if now - ts < self.FAILURE_WINDOW_S]
+            self._failure_ts.append(now)
+            if len(self._failure_ts) >= self.FAILURE_LIMIT:
+                self._failure_cooldown_until = now + self.FAILURE_COOLDOWN_S
+
+
+_feedback_throttle = _FeedbackThrottle()
+
+
+def _sanitize_feedback_log_text(text: str) -> str:
+    """反馈诊断日志脱敏：不把上游 URL 或疑似密钥发到反馈服务。"""
+    sanitized = re.sub(r"https?://[^\s)]+", "[URL]", text)
+    sanitized = re.sub(r"\b(sk|sk-ant|sk-or|sk-proj)-[A-Za-z0-9_\-]{8,}\b", "[API_KEY]", sanitized)
+    sanitized = re.sub(r"(?i)(api[_-]?key|authorization|x-api-key)(\s*[:=]\s*)([^\s,;]+)", r"\1\2[REDACTED]", sanitized)
+    return sanitized
 
 
 def _popen_hidden(command: list[str], *, detached: bool = False):
@@ -125,12 +185,14 @@ def _claude_desktop_restart_command() -> list[str]:
         script = r"""
 $ErrorActionPreference = 'SilentlyContinue'
 $processes = Get-Process | Where-Object { $_.ProcessName -in @('Claude', 'Claude Desktop') -or $_.MainWindowTitle -like '*Claude*' }
-foreach ($process in $processes) {
-    if ($process.MainWindowHandle -ne 0) { [void]$process.CloseMainWindow() }
+if ($processes) {
+    foreach ($process in $processes) {
+        if ($process.MainWindowHandle -ne 0) { [void]$process.CloseMainWindow() }
+    }
+    Start-Sleep -Seconds 2
+    $processes = Get-Process | Where-Object { $_.ProcessName -in @('Claude', 'Claude Desktop') -or $_.MainWindowTitle -like '*Claude*' }
+    if ($processes) { $processes | Stop-Process -Force }
 }
-Start-Sleep -Seconds 2
-$processes = Get-Process | Where-Object { $_.ProcessName -in @('Claude', 'Claude Desktop') -or $_.MainWindowTitle -like '*Claude*' }
-if ($processes) { $processes | Stop-Process -Force }
 $candidates = @(
     "$env:LOCALAPPDATA\Programs\Claude\Claude.exe",
     "$env:LOCALAPPDATA\AnthropicClaude\Claude.exe",
@@ -148,8 +210,16 @@ Start-Process -FilePath "Claude"
         return ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script]
     if sys.platform == "darwin":
         script = (
+            'if /usr/bin/osascript -e \'application id "com.anthropic.claudefordesktop" is running\' '
+            '| /usr/bin/grep -qi true; then '
             '/usr/bin/osascript -e \'tell application id "com.anthropic.claudefordesktop" to quit\' '
-            '>/dev/null 2>&1 || true; sleep 1; '
+            '>/dev/null 2>&1 || true; '
+            'for i in 1 2 3 4 5 6 7 8 9 10; do '
+            'if ! /usr/bin/osascript -e \'application id "com.anthropic.claudefordesktop" is running\' '
+            '| /usr/bin/grep -qi true; then break; fi; '
+            'sleep 0.2; '
+            'done; '
+            'fi; '
             '/usr/bin/open -b com.anthropic.claudefordesktop'
         )
         return ["/bin/sh", "-c", script]
@@ -159,7 +229,7 @@ Start-Process -FilePath "Claude"
 def restart_claude_desktop() -> dict:
     command = _claude_desktop_restart_command()
     _popen_hidden(command, detached=True)
-    return {"success": True, "message": "已请求重启 Claude Desktop"}
+    return {"success": True, "message": "已请求打开或重启 Claude Desktop"}
 
 
 def _public_provider(provider: Optional[dict]) -> Optional[dict]:
@@ -323,39 +393,9 @@ def _sync_desktop_for_active_provider() -> dict:
     }
 
 
-def _provider_test_model(provider: dict) -> str:
-    for model in provider_model_ids(provider):
-        if model:
-            return model
-    return "claude-sonnet-4-6"
-
-
-def _provider_test_body(provider: dict, api_format: str) -> dict:
-    model = _provider_test_model(provider)
-    if api_format == "openai_chat":
-        return {
-            "model": model,
-            "messages": [{"role": "user", "content": "ping"}],
-            "max_tokens": 8,
-            "stream": False,
-        }
-    return {
-        "model": model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 8,
-    }
-
-
-def _is_kimi_provider(provider: dict) -> bool:
-    """粗略识别 Kimi provider，用于给出更具体的排错提示。"""
-    probe = f"{provider.get('name', '')} {provider.get('baseUrl', '')}".lower()
-    return "kimi" in probe or "moonshot" in probe
-
-
 async def _test_provider_connection(provider: dict) -> dict:
-    """测试 provider 是否能真实访问上游接口。"""
-    api_format = normalize_api_format(provider.get("apiFormat", "anthropic"))
-    base_url = build_upstream_url(provider.get("baseUrl", ""), api_format)
+    """仅测试 provider URL 的网络可达性，不验证 API Key 或模型。"""
+    base_url = str(provider.get("baseUrl", "") or "").strip().rstrip("/")
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return {
@@ -363,8 +403,7 @@ async def _test_provider_connection(provider: dict) -> dict:
             "message": "API 地址无效",
         }
 
-    headers = get_upstream_headers(provider)
-    headers.pop("Content-Type", None)
+    headers = {"Accept": "application/json"}
     started = time.perf_counter()
 
     try:
@@ -373,41 +412,19 @@ async def _test_provider_connection(provider: dict) -> dict:
             response = await client.head(base_url, headers=headers)
             if response.status_code in {404, 405}:
                 response = await client.get(base_url, headers=headers)
-            if response.status_code in {404, 405} and provider.get("apiKey"):
-                response = await client.post(
-                    base_url,
-                    headers=get_upstream_headers(provider),
-                    json=_provider_test_body(provider, api_format),
-                )
     except httpx.RequestError as exc:
         latency_ms = round((time.perf_counter() - started) * 1000)
         return {
             "success": True,
             "ok": False,
             "latencyMs": latency_ms,
-            "message": f"连接失败：{exc.__class__.__name__}",
+            "message": f"服务器连接失败，延迟 {latency_ms} ms",
         }
 
     latency_ms = round((time.perf_counter() - started) * 1000)
     status_code = response.status_code
     reachable = status_code < 500
-    if 200 <= status_code < 300:
-        message = f"连接正常，{latency_ms} ms"
-    elif status_code in {401, 403}:
-        reachable = False
-        if _is_kimi_provider(provider):
-            message = (
-                f"Kimi 认证失败，HTTP {status_code}。Kimi Platform Key 请使用 "
-                f"https://api.moonshot.cn/anthropic；Kimi Code 会员 Key 请使用 "
-                f"https://api.kimi.com/coding，{latency_ms} ms"
-            )
-        else:
-            message = f"认证失败，HTTP {status_code}，请检查 API Key 和 API 地址是否匹配，{latency_ms} ms"
-    elif status_code in {404, 405}:
-        reachable = False
-        message = f"接口不可用，HTTP {status_code}，请检查 API 地址是否填到了兼容 Claude 的接口，{latency_ms} ms"
-    else:
-        message = f"地址可达，HTTP {status_code}，{latency_ms} ms"
+    message = f"服务器连接成功，延迟 {latency_ms} ms" if reachable else f"服务器连接异常，延迟 {latency_ms} ms"
 
     return {
         "success": True,
@@ -507,7 +524,7 @@ async def _detect_local_proxy() -> Optional[str]:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.17")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.1.0")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
@@ -753,11 +770,16 @@ def create_admin_app() -> FastAPI:
         result = await provider_tools.fetch_provider_models(provider)
         if not result.get("success"):
             return JSONResponse(status_code=400, content=result)
-        if cfg.update_models(provider_id, result.get("suggested", {})):
+        suggested = result.get("suggested", {})
+        next_models = dict(provider.get("models") or {})
+        default_model = str(suggested.get("default") or "").strip() if isinstance(suggested, dict) else ""
+        if default_model:
+            next_models["default"] = default_model
+        if cfg.update_models(provider_id, next_models):
             return {
                 "success": True,
                 "models": result.get("models", []),
-                "suggested": result.get("suggested", {}),
+                "suggested": {"default": default_model} if default_model else {},
                 "endpoint": result.get("endpoint"),
                 "message": "模型映射已自动填充",
             }
@@ -805,6 +827,115 @@ def create_admin_app() -> FastAPI:
             "success": True,
             "message": "配置已导入",
             "backup": result["backup"],
+        }
+
+    # ── 用户反馈 API ──
+    @app.post("/api/feedback")
+    async def submit_feedback(request: Request):
+        """转发用户反馈到 Cloudflare Worker。
+
+        前端用 JSON 提交文本和 base64 附件；本地 API 负责节流、脱敏诊断
+        信息和 multipart 转发，避免浏览器侧直接暴露反馈服务细节。
+        """
+        throttle = _feedback_throttle.acquire()
+        if not throttle["ok"]:
+            return JSONResponse(status_code=429, content={"success": False, "message": throttle["reason"]})
+
+        try:
+            data = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"success": False, "message": "请求体非 JSON"})
+
+        title = str(data.get("title") or "").strip()
+        body_text = str(data.get("body") or "").strip()
+        include_diag = bool(data.get("include_diagnostics", True))
+        client_attachments = data.get("attachments") or []
+
+        if not body_text:
+            return JSONResponse(status_code=400, content={"success": False, "message": "请填写描述"})
+
+        meta = {"app_version": cfg.DEFAULT_CONFIG.get("version", "unknown"), "app": "cc-desktop-switch"}
+        if include_diag:
+            try:
+                active = cfg.get_active_provider() or {}
+                meta.update({
+                    "os": platform.system(),
+                    "arch": platform.machine(),
+                    "active_provider_name": active.get("name", ""),
+                    "include_diagnostics": True,
+                })
+            except Exception:
+                pass
+
+        files: list = [
+            ("meta", (None, json.dumps(meta, ensure_ascii=False), "application/json")),
+            ("title", (None, title, "text/plain")),
+            ("body", (None, body_text, "text/plain")),
+        ]
+
+        screenshot_index = 0
+        log_index = 0
+        if isinstance(client_attachments, list):
+            for attachment in client_attachments:
+                if not isinstance(attachment, dict):
+                    continue
+                try:
+                    raw = base64.b64decode(str(attachment.get("content_b64") or "").encode("ascii"), validate=False)
+                except Exception:
+                    continue
+                if not raw or len(raw) > 5 * 1024 * 1024:
+                    continue
+                kind = str(attachment.get("kind") or "log")
+                name = str(attachment.get("name") or f"{kind}-{int(time.time())}.bin")
+                safe_name = "".join("_" if ch in "\x00\r\n\t/\\" else ch for ch in name)[:200] or "attachment.bin"
+                content_type = str(attachment.get("content_type") or "application/octet-stream")
+                if kind == "screenshot":
+                    field = f"screenshot{screenshot_index}"
+                    screenshot_index += 1
+                else:
+                    field = f"log{log_index}"
+                    log_index += 1
+                files.append((field, (safe_name, raw, content_type)))
+
+        if include_diag:
+            try:
+                tail_lines = proxy_logs.get_all()[-200:]
+                tail = "\n".join(
+                    _sanitize_feedback_log_text(
+                        f"{item.get('time', '')} {item.get('level', '')} {item.get('message', '')}"
+                    )
+                    for item in tail_lines
+                )
+                if tail.strip():
+                    files.append(("log_proxy_tail", ("proxy-tail.log", tail.encode("utf-8"), "text/plain")))
+            except Exception:
+                pass
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(FEEDBACK_WORKER_URL, files=files)
+            response_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+        except Exception as exc:
+            _feedback_throttle.record_failure()
+            return JSONResponse(status_code=502, content={"success": False, "message": f"反馈服务暂不可用:{exc}"})
+
+        if not response.is_success or not response_data.get("ok"):
+            _feedback_throttle.record_failure()
+            return JSONResponse(
+                status_code=response.status_code if response.status_code >= 400 else 502,
+                content={
+                    "success": False,
+                    "message": response_data.get("error") or response_data.get("message") or "上游错误",
+                },
+            )
+
+        _feedback_throttle.record_success()
+        feedback_id = response_data.get("id", "")
+        return {
+            "success": True,
+            "id": feedback_id,
+            "message": f"反馈已收到 (ID: {feedback_id})",
+            "email_sent": bool(response_data.get("email_sent")),
         }
 
     # ── CC-Switch 导入 API ──

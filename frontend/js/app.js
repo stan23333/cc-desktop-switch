@@ -34,7 +34,10 @@
   let authSchemeMenuOpen = false;
   let editingProviderId = null;
   let deleteModal = null;
+  let confirmModal = null;
   let restartReminderModal = null;
+  let feedbackBsModal = null;
+  let feedbackAttachments = [];
   let toast = null;
   let updateCheckCache = null;
   let updateInstallPhase = "idle";
@@ -58,6 +61,38 @@
   function showToast(message) {
     $("#toastBody").textContent = message;
     toast.show();
+  }
+
+  function confirmAction(message) {
+    const modalEl = $("#confirmModal");
+    const body = $("#confirmModalBody");
+    const confirmBtn = $("#confirmModalConfirm");
+    if (!modalEl || !body || !confirmBtn || !confirmModal) {
+      return Promise.resolve(window.confirm(message));
+    }
+
+    body.textContent = message;
+    confirmBtn.textContent = t("common.confirm");
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        modalEl.removeEventListener("hidden.bs.modal", handleHidden);
+        confirmBtn.removeEventListener("click", handleConfirm);
+        resolve(value);
+      };
+      const handleHidden = () => finish(false);
+      const handleConfirm = () => {
+        finish(true);
+        confirmModal.hide();
+      };
+
+      modalEl.addEventListener("hidden.bs.modal", handleHidden);
+      confirmBtn.addEventListener("click", handleConfirm);
+      confirmModal.show();
+    });
   }
 
   let _mappingAlertTimer = null;
@@ -123,6 +158,11 @@
         button.innerHTML = originalHtml;
       }
     }
+  }
+
+  async function confirmRestartClaudeAfterEnable() {
+    if (!(await confirmAction(t("confirm.restartClaudeAfterEnable")))) return;
+    await restartClaudeDesktopFromUi(null);
   }
 
   function t(key) {
@@ -269,6 +309,12 @@
       updateCheckCache = null;
       renderUpdateBadge(null);
     }
+  }
+
+  function scheduleUpdateBadgeRefresh() {
+    window.requestAnimationFrame(() => {
+      window.setTimeout(() => refreshUpdateBadge(), 1000);
+    });
   }
 
   function focusCcSwitchImportSection() {
@@ -632,6 +678,15 @@
     renderProviderMappings();
   }
 
+  function applyFetchedDefaultMapping(suggested = {}, availableModels = []) {
+    const defaultModel = String(suggested?.default || "").trim();
+    const nextMappings = { ...providerFormMappings };
+    if (defaultModel) {
+      nextMappings.default = defaultModel;
+    }
+    setProviderMappings(nextMappings, { availableModels });
+  }
+
   function updateProviderModelInput(slotKey, value) {
     providerFormMappings[slotKey] = value.trim();
   }
@@ -961,36 +1016,51 @@
       target.innerHTML = `<div class="provider-preset-grid">${presets.map((preset) => providerPresetCardMarkup(preset)).join("")}</div>`;
       return;
     }
+    target.innerHTML = providerList;
+    enableProviderReorder($("[data-provider-list]", target));
     if (options.includePresets) {
       const presets = await CCApi.getPresets();
       target.innerHTML = `${providerList}${dashboardPresetSectionMarkup(providers, presets)}`;
+      enableProviderReorder($("[data-provider-list]", target));
     } else {
       target.innerHTML = providerList;
+      enableProviderReorder($("[data-provider-list]", target));
     }
-    enableProviderReorder($("[data-provider-list]", target));
   }
 
   async function renderDashboard() {
-    const status = await CCApi.getStatus();
-    const activities = await CCApi.getActivities();
-    const health = status.desktopHealth || {};
-    const desktopReady = status.desktopConfigured && !health.needsApply;
-    await renderProviderCards("#dashboardProviderCards", { includePresets: true });
-    const desktopIcon = $("#dashboardDesktopIcon");
-    desktopIcon.classList.toggle("muted", !desktopReady);
-    desktopIcon.innerHTML = `<i class="bi ${desktopReady ? "bi-check-lg" : "bi-exclamation-lg"}"></i>`;
-    const desktopStatus = $("#dashboardDesktopStatus");
-    desktopStatus.classList.toggle("muted-text", !desktopReady);
-    desktopStatus.textContent = health.needsApply
-      ? t("status.needsApply")
-      : status.desktopConfigured ? t("status.configured") : t("status.notConfigured");
-    renderDesktopHealthWarning("#dashboardDesktopWarning", health);
-    $("#dashboardProxyStatus").textContent = status.proxyRunning ? `${t("status.running")} :${status.proxyPort}` : t("status.stopped");
-    $("#dashboardProviderName").textContent = status.activeProvider.name;
-    $("#activityList").innerHTML = activities.map((item) => (
-      `<div class="activity-row"><time>${escapeHtml(item.time)}</time><span>${escapeHtml(item.text)}</span></div>`
-    )).join("");
-    await refreshUpdateBadge();
+    renderProviderCards("#dashboardProviderCards", { includePresets: true })
+      .catch((error) => {
+        console.error(error);
+        const target = $("#dashboardProviderCards");
+        if (target) target.innerHTML = `<div class="empty-state">${escapeHtml(error.message || t("toast.requestFailed"))}</div>`;
+      });
+    Promise.all([
+      CCApi.getStatus(),
+      CCApi.getActivities(),
+    ]).then(([status, activities]) => {
+      if (routeFromHash() !== "dashboard") return;
+      const health = status.desktopHealth || {};
+      const desktopReady = status.desktopConfigured && !health.needsApply;
+      const desktopIcon = $("#dashboardDesktopIcon");
+      desktopIcon.classList.toggle("muted", !desktopReady);
+      desktopIcon.innerHTML = `<i class="bi ${desktopReady ? "bi-check-lg" : "bi-exclamation-lg"}"></i>`;
+      const desktopStatus = $("#dashboardDesktopStatus");
+      desktopStatus.classList.toggle("muted-text", !desktopReady);
+      desktopStatus.textContent = health.needsApply
+        ? t("status.needsApply")
+        : status.desktopConfigured ? t("status.configured") : t("status.notConfigured");
+      renderDesktopHealthWarning("#dashboardDesktopWarning", health);
+      $("#dashboardProxyStatus").textContent = status.proxyRunning ? `${t("status.running")} :${status.proxyPort}` : t("status.stopped");
+      $("#dashboardProviderName").textContent = status.activeProvider.name;
+      $("#activityList").innerHTML = activities.map((item) => (
+        `<div class="activity-row"><time>${escapeHtml(item.time)}</time><span>${escapeHtml(item.text)}</span></div>`
+      )).join("");
+    }).catch((error) => {
+      console.error(error);
+      if (routeFromHash() === "dashboard") showToast(error.message || t("toast.requestFailed"));
+    });
+    scheduleUpdateBadgeRefresh();
   }
 
   async function renderPresets() {
@@ -1442,7 +1512,7 @@
 
   async function importConfigFile(file) {
     if (!file) return;
-    if (!window.confirm(t("confirm.ccswitchImport"))) return;
+    if (!(await confirmAction(t("confirm.ccswitchImport")))) return;
     try {
       const text = await file.text();
       const configData = JSON.parse(text);
@@ -1571,7 +1641,7 @@
       showToast(t("settings.ccswitchNoSupported"));
       return;
     }
-    if (!window.confirm(t("confirm.configImport"))) return;
+    if (!(await confirmAction(t("confirm.configImport")))) return;
     actionEl.disabled = true;
     try {
       const result = await CCApi.importCcSwitchProviders(ids, false);
@@ -1599,11 +1669,16 @@
 
   async function applyProviderToDesktop(actionEl) {
     const form = $("#providerForm");
-    if (form && !form.reportValidity()) return;
-    if (!window.confirm(t("confirm.providerApplyDesktop"))) return;
+    if (form && !form.reportValidity()) {
+      form.querySelector(":invalid")?.focus();
+      showToast(t("toast.formInvalid"));
+      return;
+    }
+    if (!(await confirmAction(t("confirm.providerApplyDesktop")))) return;
 
     actionEl.disabled = true;
     try {
+      showToast(t("toast.providerApplyingDesktop"));
       const provider = await saveProviderFromForm();
       await CCApi.setDefaultProvider(provider.id);
       const desktopResult = await CCApi.configureDesktop();
@@ -1643,12 +1718,12 @@
         const desktopSync = result.desktopSync || {};
         if (desktopSync.attempted && desktopSync.success) {
           showToast(t("toast.defaultUpdatedDesktop"));
-          showRestartReminder();
+          await confirmRestartClaudeAfterEnable();
         } else if (desktopSync.attempted && desktopSync.success === false) {
           showToast(t("toast.defaultUpdatedDesktopFailed"));
         } else {
           showToast(t("toast.defaultUpdated"));
-          showRestartReminder();
+          await confirmRestartClaudeAfterEnable();
         }
       }
 
@@ -1730,20 +1805,29 @@
       if (action === "fetch-form-models") {
         const resultEl = $("#providerModelFetchResult");
         actionEl.disabled = true;
-        if (resultEl) resultEl.textContent = t("models.fetching");
+        if (resultEl) {
+          resultEl.textContent = t("models.fetching");
+          resultEl.classList.remove("bad");
+        }
         try {
           const hasTypedKey = !!$("#providerApiKey").value.trim();
           const result = editingProviderId && !hasTypedKey
             ? await CCApi.autofillProviderModels(editingProviderId)
             : await CCApi.fetchProviderModelsPayload(providerPayloadFromForm(false));
+          if (result.success === false) {
+            throw new Error(result.message || t("models.fetchFailedManual"));
+          }
           providerAvailableModels = Array.isArray(result.models) ? result.models.slice() : [];
-          setProviderMappings(result.suggested || emptyMappings(), { availableModels: providerAvailableModels });
+          applyFetchedDefaultMapping(result.suggested || {}, providerAvailableModels);
           if (resultEl) resultEl.textContent = t("models.fetchSuccess");
           showToast(t("toast.modelsAutofilled"));
         } catch (error) {
           providerAvailableModels = [];
           renderProviderMappings();
-          if (resultEl) resultEl.textContent = t("models.fetchFailedManual");
+          if (resultEl) {
+            resultEl.textContent = error.message || t("models.fetchFailedManual");
+            resultEl.classList.add("bad");
+          }
           showToast(error.message || t("toast.requestFailed"));
         } finally {
           actionEl.disabled = false;
@@ -1843,14 +1927,26 @@
         const providerId = $("#modelProvider").value;
         const resultEl = $("#modelFetchResult");
         actionEl.disabled = true;
-        if (resultEl) resultEl.textContent = t("models.fetching");
+        if (resultEl) {
+          resultEl.textContent = t("models.fetching");
+          resultEl.classList.remove("bad");
+        }
         try {
           const result = await CCApi.autofillProviderModels(providerId);
+          if (result.success === false) {
+            throw new Error(result.message || t("models.fetchFailedManual"));
+          }
           await renderMappingCards();
           if (resultEl) {
             resultEl.textContent = `${t("models.fetched")} ${result.models.length}`;
           }
           showToast(t("toast.modelsAutofilled"));
+        } catch (error) {
+          if (resultEl) {
+            resultEl.textContent = error.message || t("models.fetchFailedManual");
+            resultEl.classList.add("bad");
+          }
+          showToast(error.message || t("toast.requestFailed"));
         } finally {
           actionEl.disabled = false;
         }
@@ -1862,7 +1958,7 @@
       }
 
       if (action === "apply-desktop") {
-        if (!window.confirm(t("confirm.desktopApply"))) return;
+        if (!(await confirmAction(t("confirm.desktopApply")))) return;
         await CCApi.configureDesktop();
         await renderDesktop();
         showToast(t("toast.desktopApplied"));
@@ -1870,12 +1966,12 @@
       }
 
       if (action === "restart-claude") {
-        if (!window.confirm(t("confirm.restartClaude"))) return;
+        if (!(await confirmAction(t("confirm.restartClaude")))) return;
         await restartClaudeDesktopFromUi(actionEl);
       }
 
       if (action === "clear-desktop") {
-        if (!window.confirm(t("confirm.desktopClear"))) return;
+        if (!(await confirmAction(t("confirm.desktopClear")))) return;
         await CCApi.clearDesktop();
         const route = routeFromHash();
         if (route === "dashboard") {
@@ -1908,6 +2004,10 @@
 
       if (action === "view-logs") {
         window.location.hash = "proxy";
+      }
+
+      if (action === "open-feedback") {
+        openFeedbackModal();
       }
 
       if (action === "open-ccswitch-import") {
@@ -1979,7 +2079,7 @@
           showToast(message);
           return;
         }
-        if (!window.confirm(t("confirm.installUpdate"))) return;
+        if (!(await confirmAction(t("confirm.installUpdate")))) return;
         let keepBusyState = false;
         const status = $("#updateStatus");
         let progressPoll = null;
@@ -2088,6 +2188,171 @@
     if (!preset) return;
     editingProviderId = null;
     applyPresetToForm(preset);
+  }
+
+  function openFeedbackModal() {
+    const modalEl = $("#feedbackModal");
+    if (!modalEl) return;
+    $("#feedbackTitle").value = "";
+    $("#feedbackBody").value = "";
+    $("#feedbackIncludeDiagnostics").checked = true;
+    feedbackAttachments = [];
+    renderFeedbackAttachments();
+    if (!feedbackBsModal) feedbackBsModal = new bootstrap.Modal(modalEl);
+    feedbackBsModal.show();
+  }
+
+  function renderFeedbackAttachments() {
+    const list = $("#feedbackAttachmentList");
+    if (!list) return;
+    list.innerHTML = feedbackAttachments
+      .map((attachment, index) => `
+        <li class="feedback-attachment-item">
+          <span>${escapeHtml(attachment.name)}</span>
+          <small>${escapeHtml(formatBytes(attachment.size))}</small>
+          <button type="button" class="btn-link" data-feedback-attachment="${index}" aria-label="${escapeHtml(t("common.delete"))}">×</button>
+        </li>
+      `)
+      .join("");
+    $all("[data-feedback-attachment]", list).forEach((button) => {
+      button.addEventListener("click", () => {
+        feedbackAttachments.splice(Number(button.dataset.feedbackAttachment), 1);
+        renderFeedbackAttachments();
+      });
+    });
+  }
+
+  function addFeedbackFiles(files) {
+    if (!files || !files.length) return;
+    const maxFileBytes = 5 * 1024 * 1024;
+    for (const file of files) {
+      if (file.size > maxFileBytes) {
+        showToast(formatI18n("feedback.tooLargeFile", { name: file.name }));
+        continue;
+      }
+      feedbackAttachments.push({ name: file.name, size: file.size, file });
+    }
+    renderFeedbackAttachments();
+  }
+
+  function formatBytes(size) {
+    if (size < 1024) return `${size}B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)}KB`;
+    return `${(size / 1024 / 1024).toFixed(2)}MB`;
+  }
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const comma = result.indexOf(",");
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error || new Error("FileReader failed"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function submitFeedback() {
+    const titleEl = $("#feedbackTitle");
+    const bodyEl = $("#feedbackBody");
+    const submitBtn = $("#feedbackSubmitBtn");
+    if (!bodyEl || !submitBtn) return;
+
+    const title = (titleEl?.value || "").trim();
+    const body = bodyEl.value.trim();
+    if (!body) {
+      showToast(t("feedback.bodyRequired"));
+      bodyEl.focus();
+      return;
+    }
+
+    submitBtn.disabled = true;
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = t("feedback.submitting");
+
+    try {
+      const attachments = [];
+      for (const attachment of feedbackAttachments) {
+        try {
+          const contentB64 = await fileToBase64(attachment.file);
+          const isImage = /^image\//.test(attachment.file.type || "");
+          const safeName = String(attachment.name || `attachment-${Date.now()}.bin`)
+            .replace(/[\x00-\x1f\\/]/g, "_")
+            .slice(0, 200);
+          attachments.push({
+            kind: isImage ? "screenshot" : "log",
+            name: safeName,
+            content_type: attachment.file.type || "application/octet-stream",
+            content_b64: contentB64,
+          });
+        } catch (error) {
+          console.warn("[feedback] skipped attachment:", error, attachment);
+        }
+      }
+
+      const result = await CCApi.submitFeedback({
+        title,
+        body,
+        include_diagnostics: $("#feedbackIncludeDiagnostics").checked,
+        attachments,
+      });
+      if (feedbackBsModal) feedbackBsModal.hide();
+      showToast(formatI18n("feedback.successToast", { id: result.id || "" }));
+    } catch (error) {
+      console.error("[feedback] submit failed:", error);
+      let message = error && error.message ? error.message : String(error);
+      if (message.includes("did not match the expected pattern")) {
+        message = "请求体构造异常，请重试或去掉附件";
+      }
+      showToast(formatI18n("feedback.failToast", { message }));
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalText;
+    }
+  }
+
+  function bindFeedbackEvents() {
+    const dropzone = $("#feedbackDropzone");
+    const fileInput = $("#feedbackFiles");
+    if (dropzone && fileInput) {
+      dropzone.addEventListener("click", (event) => {
+        if (event.target.closest(".feedback-attachment-item")) return;
+        fileInput.click();
+      });
+      fileInput.addEventListener("change", () => {
+        addFeedbackFiles(Array.from(fileInput.files));
+        fileInput.value = "";
+      });
+      dropzone.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        dropzone.classList.add("dragover");
+      });
+      dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dragover"));
+      dropzone.addEventListener("drop", (event) => {
+        event.preventDefault();
+        dropzone.classList.remove("dragover");
+        addFeedbackFiles(Array.from(event.dataTransfer.files));
+      });
+    }
+
+    document.addEventListener("paste", (event) => {
+      const modalEl = $("#feedbackModal");
+      if (!modalEl?.classList.contains("show")) return;
+      const items = event.clipboardData?.items || [];
+      for (const item of items) {
+        if (item.kind === "file" && /^image\//.test(item.type)) {
+          const file = item.getAsFile();
+          if (file) {
+            addFeedbackFiles([new File([file], file.name || `pasted-${Date.now()}.png`, { type: file.type })]);
+          }
+        }
+      }
+    });
+
+    const submitBtn = $("#feedbackSubmitBtn");
+    if (submitBtn) submitBtn.addEventListener("click", submitFeedback);
   }
 
   function bindEvents() {
@@ -2241,12 +2506,14 @@
 
   document.addEventListener("DOMContentLoaded", async () => {
     deleteModal = new bootstrap.Modal($("#deleteModal"));
+    confirmModal = new bootstrap.Modal($("#confirmModal"));
     restartReminderModal = new bootstrap.Modal($("#restartReminderModal"), {
       backdrop: "static",
       keyboard: false,
     });
     toast = new bootstrap.Toast($("#appToast"), { delay: 2200 });
     bindEvents();
+    bindFeedbackEvents();
     const settings = await CCApi.getSettings();
     CCI18n.apply(settings.language || "zh");
     applyTheme(settings.theme || "default");

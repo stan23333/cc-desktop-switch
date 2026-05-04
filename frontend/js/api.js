@@ -219,8 +219,9 @@
     },
 
     async configureDesktop() {
-      await api('POST', '/api/desktop/configure');
-      return this.getDesktopStatus();
+      const applyResult = await api('POST', '/api/desktop/configure');
+      const status = await this.getDesktopStatus();
+      return { ...status, ...applyResult };
     },
 
     async clearDesktop() {
@@ -315,6 +316,11 @@
 
     async importConfig(configData) {
       return api('POST', '/api/config/import', configData);
+    },
+
+    async submitFeedback(payload) {
+      // Keep the codex-app-transfer feedback contract: JSON payload, base64 files.
+      return api('POST', '/api/feedback', payload);
     },
 
     async getCcSwitchStatus() {

@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@400;500;600;700;800&display=swap");
-
 :root {
   --app-bg: #f6f8fb;
   --surface: #ffffff;
@@ -1964,6 +1962,7 @@ body {
   flex-shrink: 0;
 }
 
+.dashboard-feedback-button,
 .dashboard-import-button,
 .dashboard-clear-button {
   min-height: 38px;
@@ -1971,6 +1970,80 @@ body {
   border-radius: 12px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.feedback-dropzone {
+  margin-top: 6px;
+  padding: 18px;
+  border: 1.5px dashed var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+
+.feedback-dropzone:hover,
+.feedback-dropzone.dragover {
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+
+.feedback-dropzone.dragover {
+  border-style: solid;
+}
+
+.feedback-dropzone-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.feedback-attachment-list {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.feedback-attachment-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.feedback-attachment-item span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedback-attachment-item small {
+  color: var(--muted);
+}
+
+.feedback-attachment-item .btn-link {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.feedback-attachment-item .btn-link:hover,
+.feedback-warning {
+  color: var(--danger, #c33);
 }
 
 .advanced-provider-options .detect-format-row {

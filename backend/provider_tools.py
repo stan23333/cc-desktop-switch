@@ -22,6 +22,19 @@ MODEL_EXCLUDE_KEYWORDS = (
     "audio",
 )
 
+AUTH_ERROR_KEYWORDS = (
+    "invalid api key",
+    "invalid_api_key",
+    "api key",
+    "apikey",
+    "unauthorized",
+    "authentication",
+    "authorization",
+    "invalid token",
+    "access token",
+    "token expired",
+)
+
 
 def _clean_base_url(url: str) -> str:
     return str(url or "").strip().rstrip("/")
@@ -121,6 +134,34 @@ def extract_model_ids(payload: Any) -> list[str]:
     return model_ids
 
 
+def _response_error_message(response: httpx.Response) -> str:
+    try:
+        data = response.json()
+    except ValueError:
+        return (response.text or "").strip()[:200]
+    if isinstance(data, dict):
+        error = data.get("error")
+        if isinstance(error, dict):
+            value = error.get("message") or error.get("type")
+            if value:
+                return str(value)[:200]
+        value = data.get("message") or data.get("error_msg") or data.get("msg")
+        if value:
+            return str(value)[:200]
+    return str(data)[:200]
+
+
+def _auth_error_message(status_code: int, detail: str = "") -> str | None:
+    normalized = str(detail or "").strip()
+    lower = normalized.lower()
+    is_auth_status = status_code in {401, 403}
+    is_auth_text = any(keyword in lower for keyword in AUTH_ERROR_KEYWORDS)
+    if not (is_auth_status or is_auth_text):
+        return None
+    prefix = f"API Key 不可用：{normalized}" if normalized else f"API Key 不可用：上游返回 HTTP {status_code}"
+    return f"{prefix}。请检查 API Key 是否正确、是否属于当前 Base URL/地区，以及认证方式是否匹配。"
+
+
 def _usable_model_ids(model_ids: list[str]) -> list[str]:
     usable = []
     for model_id in model_ids:
@@ -140,37 +181,18 @@ def _pick_model(model_ids: list[str], keywords: tuple[str, ...], fallback_index:
         return ""
     return model_ids[min(fallback_index, len(model_ids) - 1)]
 
-
-from backend.model_alias import model_mappings_with_legacy_aliases
-
-
 def suggest_model_mappings(model_ids: list[str]) -> dict:
-    """根据模型名称给 Claude 默认槽位自动推荐映射。"""
+    """根据模型名称只推荐默认映射。
+
+    获取模型只负责找一个可用的默认模型。Opus / Sonnet / Haiku 等明确槽位
+    应由用户手动填写；未填写时请求路径会降级到 default。
+    """
     usable = _usable_model_ids(model_ids)
-    sonnet = _pick_model(
+    default = _pick_model(
         usable,
         ("sonnet", "claude", "k2", "glm-5.1", "qwen3-max", "max", "pro", "chat"),
     )
-    haiku = _pick_model(
-        usable,
-        ("haiku", "flash", "lite", "mini", "turbo", "fast", "v3", "chat"),
-        fallback_index=0,
-    )
-    opus = _pick_model(
-        usable,
-        ("opus", "reasoner", "thinking", "r1", "max", "pro", "plus"),
-        fallback_index=0,
-    )
-    default = sonnet or opus or haiku or (usable[0] if usable else "")
-    return model_mappings_with_legacy_aliases({
-        "default": default,
-        "opus_4_7": opus or default,
-        "opus_4_6": "",
-        "opus_3": "",
-        "sonnet_4_6": sonnet or default,
-        "sonnet_4_5": "",
-        "haiku_4_5": haiku or default,
-    })
+    return {"default": default}
 
 
 async def fetch_provider_models(provider: dict) -> dict:
@@ -182,6 +204,7 @@ async def fetch_provider_models(provider: dict) -> dict:
     headers = get_upstream_headers(provider)
     headers.pop("Content-Type", None)
     errors = []
+    auth_failure: tuple[int, str] | None = None
     timeout = httpx.Timeout(12.0, connect=6.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         for endpoint in endpoints:
@@ -191,7 +214,14 @@ async def fetch_provider_models(provider: dict) -> dict:
                 errors.append(f"{endpoint}: {exc.__class__.__name__}")
                 continue
             if not response.is_success:
-                errors.append(f"{endpoint}: HTTP {response.status_code}")
+                detail = _response_error_message(response)
+                auth_message = _auth_error_message(response.status_code, detail)
+                if auth_message:
+                    auth_failure = (response.status_code, auth_message)
+                    errors.append(f"{endpoint}: {auth_message}")
+                else:
+                    suffix = f"：{detail}" if detail else ""
+                    errors.append(f"{endpoint}: HTTP {response.status_code}{suffix}")
                 continue
             try:
                 payload = response.json()
@@ -207,6 +237,18 @@ async def fetch_provider_models(provider: dict) -> dict:
                     "suggested": suggest_model_mappings(model_ids),
                 }
             errors.append(f"{endpoint}: 未发现模型列表")
+
+    if auth_failure:
+        status_code, message = auth_failure
+        return {
+            "success": False,
+            "code": "api_key_invalid",
+            "statusCode": status_code,
+            "message": message,
+            "models": [],
+            "suggested": {},
+            "errors": errors[-5:],
+        }
 
     return {
         "success": False,
@@ -402,17 +444,17 @@ async def check_model_available(provider: dict, model: str) -> dict:
         if resp.is_success:
             return {"available": True, "message": "模型响应正常"}
 
-        try:
-            error_data = resp.json()
-            error_msg = (
-                error_data.get("error", {}).get("message", "")
-                or error_data.get("message", "")
-                or resp.text[:200]
-            )
-        except ValueError:
-            error_msg = resp.text[:200] or f"HTTP {resp.status_code}"
+        error_msg = _response_error_message(resp) or f"HTTP {resp.status_code}"
+        auth_message = _auth_error_message(resp.status_code, error_msg)
+        if auth_message:
+            return {
+                "available": False,
+                "code": "api_key_invalid",
+                "statusCode": resp.status_code,
+                "message": auth_message,
+            }
 
-        return {"available": False, "message": error_msg or f"HTTP {resp.status_code}"}
+        return {"available": False, "statusCode": resp.status_code, "message": error_msg or f"HTTP {resp.status_code}"}
 
     except httpx.TimeoutException:
         return {"available": False, "message": "请求超时"}

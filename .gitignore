@@ -13,6 +13,10 @@ __pycache__/
 *.log
 .pytest_cache/
 .ruff_cache/
+node_modules/
+target/
+src-tauri/target/
+src-tauri/gen/
 
 build/
 dist/
