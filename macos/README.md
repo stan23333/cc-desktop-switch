@@ -2,7 +2,7 @@
 
 This directory owns only the macOS installer wrapper layer for CC Desktop Switch.
 
-As of v1.1.0, the macOS application bundle is built by Tauri. The Python/PyInstaller macOS app-build path has been removed. The remaining scripts package an existing Tauri `.app` bundle into the release artifacts:
+As of v1.1.0, the macOS application bundle is built by Tauri. The Python/PyInstaller macOS app-build path has been removed. Rust `xtask` owns the packaging orchestration. The remaining shell scripts are thin compatibility wrappers around `cargo run -p xtask -- package macos`:
 
 - `make-pkg.sh`
 - `make-dmg.sh`
@@ -26,6 +26,12 @@ Then create the installer package and drag-and-drop disk image:
 ```bash
 ./macos/make-pkg.sh 1.1.0 "dist/mac/CC Desktop Switch.app" "dist/mac/CC-Desktop-Switch-v1.1.0-macOS-arm64.pkg"
 ./macos/make-dmg.sh 1.1.0 "dist/mac/CC Desktop Switch.app" "dist/mac/CC-Desktop-Switch-v1.1.0-macOS-arm64.dmg"
+```
+
+The direct Rust entrypoint is:
+
+```bash
+cargo run -p xtask -- package macos --version 1.1.0 --app "dist/mac/CC Desktop Switch.app"
 ```
 
 All macOS release outputs stay under:

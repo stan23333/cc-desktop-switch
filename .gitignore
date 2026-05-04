@@ -41,6 +41,7 @@ image/
 ccds-*.png
 docs/promo/screenshots/*
 !docs/promo/screenshots/readme-*.png
+docs/copilot-api-caozhiyuan/
 
 # Failed favicon download kept locally for reference; the app uses zhipu.png.
 frontend/assets/providers/zhipu.ico

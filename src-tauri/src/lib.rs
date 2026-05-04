@@ -2,6 +2,7 @@ mod ccswitch_import;
 mod config;
 mod desktop;
 mod feedback;
+mod generated;
 mod model_alias;
 mod models;
 mod provider_tools;

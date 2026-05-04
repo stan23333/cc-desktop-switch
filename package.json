@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm build && vite preview --host 127.0.0.1",
-    "build": "node scripts/build-tauri-frontend.mjs",
-    "check:static": "node scripts/check-static-contracts.mjs",
+    "build": "cargo run -p xtask -- frontend build",
+    "check:static": "cargo run -p xtask -- frontend check-contracts",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

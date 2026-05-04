@@ -16,8 +16,8 @@
 - Retired FastAPI management API and static frontend server: `backend/main.py`.
 - Retired Python provider config, desktop integration, local proxy, API adapter, provider-tool, CC-Switch import, and update modules under `backend/`.
 - Frontend: `frontend/index.html`, `frontend/js/app.js`, `frontend/js/tauri-api.js`, `frontend/js/i18n.js`, `frontend/css/style.css`.
-- Current packaging: Windows release artifacts are built from Tauri/Rust output through `.github/workflows/release.yml` and `scripts/New-Release.ps1`; `windows/build.bat` is only a local helper. macOS release packaging builds the `.app` through Tauri and wraps it with `macos/make-pkg.sh` / `macos/make-dmg.sh`. The pre-Tauri macOS Python/PyInstaller app-build path was removed after v1.1.0 parity.
-- Tests: Rust unit tests under `src-tauri/src/` plus `scripts/check-static-contracts.mjs` for frontend bridge and release-chain static contracts.
+- Current packaging: Windows release artifacts are built from Tauri/Rust output through `.github/workflows/release.yml` and `cargo run -p xtask -- release windows`; `windows/build.bat` is only a local helper. macOS release packaging builds the `.app` through Tauri and wraps it through `cargo run -p xtask -- package macos`, with `macos/make-pkg.sh` / `macos/make-dmg.sh` retained as thin wrappers. The pre-Tauri macOS Python/PyInstaller app-build path was removed after v1.1.0 parity.
+- Tests: Rust unit tests under `src-tauri/src/` plus `cargo run -p xtask -- frontend check-contracts` for frontend bridge and release-chain static contracts.
 
 ## Recommended Target
 
@@ -144,11 +144,10 @@ The final steady state should be:
 
 **Files:**
 - Modify: `.github/workflows/release.yml` if present in the target branch.
-- Modify: `scripts/New-Release.ps1`
+- Replace: `scripts/New-Release.ps1` with `cargo run -p xtask -- release windows`
 - Removed: hand-written `windows/installer.nsi`, because Windows NSIS output is now owned by Tauri Bundler.
 - Remove after parity: pre-Tauri macOS Python/PyInstaller app-build path.
-- Modify: `macos/make-pkg.sh`
-- Modify: `macos/make-dmg.sh`
+- Replace orchestration in `macos/make-pkg.sh` and `macos/make-dmg.sh` with thin `xtask` wrappers.
 - Modify: `release/latest.json` generation flow if present locally or in CI.
 
 **Steps:**
@@ -171,7 +170,7 @@ The final steady state should be:
 - Removed after Windows release moved to Tauri artifacts: `windows/build.spec`
 - Removed after Windows compatibility path replacement: `requirements.txt`
 - Removed after parity: `macos/build-macos.sh`, `macos/build-macos.spec`, `macos/prepare-icon.py`, and `macos/entitlements.plist`
-- Replaced tests: `tests/test_provider_config_and_proxy.py` with Rust tests and `scripts/check-static-contracts.mjs`
+- Replaced tests: `tests/test_provider_config_and_proxy.py` with Rust tests and `cargo run -p xtask -- frontend check-contracts`
 - Update: `README.md`
 - Update: `docs/USAGE.md`
 - Update: `docs/QUICK_START.md`

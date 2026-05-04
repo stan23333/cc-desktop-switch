@@ -34,6 +34,13 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+where cargo >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [错误] 未找到 cargo。请先安装 Rust 工具链。
+    pause
+    exit /b 1
+)
+
 if "%MODE%"=="exe" (
     pnpm install --frozen-lockfile
     if %errorlevel% neq 0 goto FAIL
@@ -63,7 +70,7 @@ if "%MODE%"=="release" (
     )
     pnpm install --frozen-lockfile
     if %errorlevel% neq 0 goto FAIL
-    powershell -NoProfile -ExecutionPolicy Bypass -File scripts\New-Release.ps1 -Version %VERSION% -Build -TryInstaller
+    cargo run -p xtask -- release windows --version %VERSION% --build --try-installer
     if %errorlevel% neq 0 goto FAIL
     echo.
     echo  输出目录: release\

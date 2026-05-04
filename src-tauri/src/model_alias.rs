@@ -1,33 +1,7 @@
 use std::collections::BTreeMap;
 
-pub const MODEL_ORDER: [&str; 7] = [
-    "default",
-    "opus_4_7",
-    "opus_4_6",
-    "opus_3",
-    "sonnet_4_6",
-    "sonnet_4_5",
-    "haiku_4_5",
-];
-
-const LEGACY_CANDIDATES: [(&str, &[&str]); 6] = [
-    ("opus_4_7", &["opus_4_7", "opus"]),
-    ("opus_4_6", &["opus_4_6"]),
-    ("opus_3", &["opus_3"]),
-    ("sonnet_4_6", &["sonnet_4_6", "sonnet"]),
-    ("sonnet_4_5", &["sonnet_4_5"]),
-    ("haiku_4_5", &["haiku_4_5", "haiku"]),
-];
-
-#[allow(dead_code)]
-const CLAUDE_ID_TO_SLOT: [(&str, &str); 6] = [
-    ("claude-opus-4-7", "opus_4_7"),
-    ("claude-opus-4-6", "opus_4_6"),
-    ("claude-3-opus", "opus_3"),
-    ("claude-sonnet-4-6", "sonnet_4_6"),
-    ("claude-sonnet-4-5", "sonnet_4_5"),
-    ("claude-haiku-4-5", "haiku_4_5"),
-];
+pub use crate::generated::model_contracts::MODEL_ORDER;
+use crate::generated::model_contracts::{CLAUDE_ID_TO_SLOT, LEGACY_CANDIDATES};
 
 pub fn empty_model_mappings() -> BTreeMap<String, String> {
     MODEL_ORDER

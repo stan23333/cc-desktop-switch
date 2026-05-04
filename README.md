@@ -189,7 +189,7 @@ pnpm install
 pnpm tauri dev
 ```
 
-Windows 发布打包现在由 Tauri/Rust 产物生成，`scripts/New-Release.ps1` 会调用 Tauri 构建并整理 Setup、Portable ZIP、x64 EXE 和 `latest.json`。`windows/build.bat` 只保留为 Windows 本地手动构建入口。
+Windows 发布打包现在由 Rust `xtask` 编排，`cargo run -p xtask -- release windows --build --try-installer` 会调用 Tauri 构建并整理 Setup、Portable ZIP、x64 EXE 和 `latest.json`。`windows/build.bat` 只保留为 Windows 本地手动构建入口。
 
 ## 验证
 

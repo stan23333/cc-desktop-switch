@@ -1,5 +1,12 @@
 const FRONTEND_ROOT = './';
 
+function contracts() {
+  if (!window.CCDS_CONTRACTS) {
+    throw new Error('Generated frontend contracts are missing');
+  }
+  return window.CCDS_CONTRACTS;
+}
+
 function invoke(command, args = {}) {
   const coreInvoke = window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke;
   if (!coreInvoke) {
@@ -70,6 +77,7 @@ function iconForProvider(provider = {}) {
 
 function mapProvider(provider = {}, activeId = null) {
   const models = provider.models || {};
+  const mappings = normalizeModelMappings(models);
   return {
     ...provider,
     id: provider.id,
@@ -83,17 +91,24 @@ function mapProvider(provider = {}, activeId = null) {
     requestOptions: provider.requestOptions || {},
     default: provider.id === activeId,
     isBuiltin: !!provider.isBuiltin,
-    mappings: {
-      default: models.default || '',
-      opus_4_7: models.opus_4_7 || models.opus || '',
-      opus_4_6: models.opus_4_6 || '',
-      opus_3: models.opus_3 || '',
-      sonnet_4_6: models.sonnet_4_6 || models.sonnet || '',
-      sonnet_4_5: models.sonnet_4_5 || '',
-      haiku_4_5: models.haiku_4_5 || models.haiku || '',
-    },
+    mappings,
     ...iconForProvider(provider),
   };
+}
+
+function normalizeModelMappings(models = {}) {
+  const contractData = contracts();
+  const mappings = Object.fromEntries(
+    (contractData.providerFormModelSlots || []).map((slot) => [slot.key, ''])
+  );
+  mappings.default = String(models.default || '').trim();
+  (contractData.legacyCandidates || []).forEach(({ target, candidates }) => {
+    const value = (candidates || [])
+      .map((candidate) => String(models[candidate] || '').trim())
+      .find(Boolean);
+    if (value) mappings[target] = value;
+  });
+  return mappings;
 }
 
 function mapPreset(preset = {}) {

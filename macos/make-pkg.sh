@@ -2,40 +2,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NODE_BIN="${NODE_BIN:-node}"
-detect_version() {
-  "$NODE_BIN" -e 'const fs = require("fs"); const pkg = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (!pkg.version) throw new Error("version not found in package.json"); console.log(pkg.version);' "$ROOT/package.json"
-}
+cd "$ROOT"
 
-VERSION="${1:-${CCDS_VERSION:-$(detect_version)}}"
-APP_PATH="${2:-dist/mac/CC Desktop Switch.app}"
-OUTPUT_PKG="${3:-dist/mac/CC-Desktop-Switch-v${VERSION}-macOS.pkg}"
-
-if [[ ! -d "$APP_PATH" ]]; then
-  echo "App bundle not found: $APP_PATH" >&2
-  exit 1
+ARGS=(package macos --skip-dmg)
+if [[ $# -ge 1 && -n "${1:-}" ]]; then
+  ARGS+=(--version "$1")
+elif [[ -n "${CCDS_VERSION:-}" ]]; then
+  ARGS+=(--version "$CCDS_VERSION")
+fi
+if [[ $# -ge 2 && -n "${2:-}" ]]; then
+  ARGS+=(--app "$2")
+fi
+if [[ $# -ge 3 && -n "${3:-}" ]]; then
+  ARGS+=(--pkg "$3")
 fi
 
-if ! command -v pkgbuild >/dev/null 2>&1; then
-  echo "pkgbuild is required to create a macOS installer package." >&2
-  exit 1
-fi
-
-PKG_ROOT="$ROOT/.tmp/pkg-root"
-SCRIPTS_DIR="$ROOT/macos/pkg-scripts"
-APP_NAME="$(basename "$APP_PATH")"
-
-rm -rf "$PKG_ROOT"
-mkdir -p "$PKG_ROOT/Applications"
-mkdir -p "$(dirname "$OUTPUT_PKG")"
-
-ditto "$APP_PATH" "$PKG_ROOT/Applications/$APP_NAME"
-
-rm -f "$OUTPUT_PKG"
-pkgbuild \
-  --root "$PKG_ROOT" \
-  --install-location "/" \
-  --identifier "io.github.lonr6.ccdesktopswitch" \
-  --version "$VERSION" \
-  --scripts "$SCRIPTS_DIR" \
-  "$OUTPUT_PKG"
+cargo run -p xtask -- "${ARGS[@]}"

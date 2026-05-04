@@ -56,20 +56,21 @@ jobs:
           }
 
           $args = @(
-            "-NoProfile",
-            "-ExecutionPolicy", "Bypass",
-            "-File", "scripts\New-Release.ps1",
-            "-Version", $version,
-            "-Build",
-            "-TryInstaller",
-            "-Repository", $env:GITHUB_REPOSITORY
+            "run",
+            "-p", "xtask",
+            "--",
+            "release", "windows",
+            "--version", $version,
+            "--build",
+            "--try-installer",
+            "--repository", $env:GITHUB_REPOSITORY
           )
 
           if ($env:WINDOWS_CODESIGN_PFX_BASE64) {
-            $args += "-CodeSign"
+            $args += "--code-sign"
           }
 
-          powershell @args
+          cargo @args
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -79,12 +80,12 @@ jobs:
       - name: Verify release signatures
         shell: powershell
         run: |
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe"
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip"
-          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\latest.json"
+          cargo run -p xtask -- release verify --file "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe"
+          cargo run -p xtask -- release verify --file "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip"
+          cargo run -p xtask -- release verify --file "release\latest.json"
           $setup = "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Setup.exe"
           if (Test-Path -LiteralPath $setup) {
-            powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File $setup
+            cargo run -p xtask -- release verify --file $setup
           }
 
       - name: Ensure release tag for manual run

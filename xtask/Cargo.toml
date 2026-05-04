@@ -1,0 +1,15 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+rand_core = { version = "0.6", features = ["getrandom"] }
+rsa = { version = "0.9", features = ["pem", "sha2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+time = { version = "0.3", features = ["formatting"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
