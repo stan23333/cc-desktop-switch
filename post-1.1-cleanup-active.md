@@ -8,7 +8,7 @@ Continue cleaning the codebase after the v1.1.0 Tauri/Rust migration by reducing
 
 - Started: 2026-05-04.
 - Trigger: post-cleanup code scan showed Rust is now the largest language, but Python still accounts for about one third of current self-authored source.
-- Current focus: P3 preparation after completing P2 Python runtime retirement.
+- Current focus: P4 preparation after completing large-file source splits.
 - Boundary: do not reintroduce Python as an app startup, packaging, or validation dependency.
 
 ## Stable Task Tree
@@ -25,11 +25,11 @@ Continue cleaning the codebase after the v1.1.0 Tauri/Rust migration by reducing
   - [x] P2.1. Confirm Rust/Tauri covers all runtime behavior still used by `backend/` and `main.py`.
   - [x] P2.2. Remove `backend/`, `main.py`, `requirements.txt`, and Python-specific tests only after parity confirmation.
   - [x] P2.3. Update docs, validation commands, and release notes to remove Python fallback language.
-- [ ] P3. Split large source files without changing behavior.
-  - [ ] P3.1. Split `src-tauri/src/proxy/mod.rs` by conversion, listener, streaming, and telemetry responsibilities.
-  - [ ] P3.2. Split `frontend/js/app.js` into route/render/action modules only if the original UI contract stays intact.
-  - [ ] P3.3. Split `frontend/css/style.css` by layout, components, and pages without visual redesign.
-- [ ] P4. Clean repository management artifacts.
+- [x] P3. Split large source files without changing behavior.
+  - [x] P3.1. Split `src-tauri/src/proxy/mod.rs` by conversion, listener, streaming, and telemetry responsibilities.
+  - [x] P3.2. Split `frontend/js/app.js` into route/render/action modules only if the original UI contract stays intact.
+  - [x] P3.3. Split `frontend/css/style.css` by layout, components, and pages without visual redesign.
+- [ ] P4. Clean repository management artifacts. (active)
   - [x] P4.1. Retire the obsolete Python test split target after P2 removed `tests/test_provider_config_and_proxy.py`.
   - [ ] P4.2. Decide whether tracked `codex_history/` archives should stay in the public repository.
   - [ ] P4.3. Keep only current, useful project-management notes in tracked documentation.
@@ -46,6 +46,10 @@ Continue cleaning the codebase after the v1.1.0 Tauri/Rust migration by reducing
 - 2026-05-05: Completed P2.1. Rust/Tauri now owns active runtime behavior for config storage, provider presets, model alias fallback, Claude Desktop Windows/macOS writes and health checks, local proxy forwarding and SSE conversion, provider diagnostics, model discovery, update download/install metadata, feedback submission, CC-Switch import, local proxy detection, single-instance behavior, and tray restore. The remaining Python files were confirmed to be compatibility fallback code and Python-only tests rather than active packaging or startup dependencies.
 - 2026-05-05: Completed P2.2. Removed `backend/`, `main.py`, `requirements.txt`, `windows/start.bat`, the retired Python HTTP API wrapper, and the Python test suite. Moved the Tauri bridge to `frontend/js/tauri-api.js`, made `frontend/index.html` load it directly, simplified `scripts/build-tauri-frontend.mjs`, and updated the embedded static frontend server to serve the direct Tauri frontend source.
 - 2026-05-05: Completed P2.3. Added `scripts/check-static-contracts.mjs` and `pnpm check:static` to replace static frontend/release-chain checks that used to live in Python tests. Updated README, usage docs, macOS packaging docs/scripts, release notes, the migration plan, and agent notes so current instructions no longer depend on the retired Python fallback path. macOS PKG/DMG helper scripts now read the version from `package.json` with Node instead of reading `main.py` with Python.
+- 2026-05-05: Started P3.1. The refactor target is purely structural: split the Rust proxy module while preserving the existing local listener routes, forwarding behavior, SSE conversion, telemetry, model mapping, gateway auth, tests, and public function names used by `provider_tools.rs` and `lib.rs`.
+- 2026-05-05: Completed P3.1. Split `src-tauri/src/proxy/mod.rs` into `conversion.rs`, `forwarding.rs`, `listener.rs`, `runtime.rs`, `streaming.rs`, and `tests.rs`. The root `mod.rs` now only declares submodules and re-exports the public proxy API. The split kept existing function bodies and test assertions intact while making module-level visibility explicit.
+- 2026-05-05: Completed P3.2. Split the original frontend app source into `frontend/js/app/00-state.js`, `10-ui-core.js`, `20-routes.js`, `30-settings-import.js`, `40-actions.js`, and `50-feedback-bootstrap.js`. Added `scripts/build-app-bundle.mjs` so `frontend/js/app.js` remains the same classic-script browser contract generated from those source fragments, and wired the app bundle freshness check into `pnpm check:static`.
+- 2026-05-05: Completed P3.3. Split the original stylesheet source into `frontend/css/style/00-foundation.css`, `10-components.css`, `20-responsive.css`, `30-palette-layout-refinement.css`, `40-dashboard-provider-lists.css`, `50-forms-and-utility-pages.css`, and `60-settings-guide-responsive.css`. Added `scripts/build-style-bundle.mjs` so `frontend/css/style.css` remains the generated stylesheet loaded by the existing page, and wired stylesheet freshness into `pnpm check:static`.
 
 ## Validation Results
 
@@ -56,9 +60,12 @@ Continue cleaning the codebase after the v1.1.0 Tauri/Rust migration by reducing
 - `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`: passed.
 - `cargo check --manifest-path src-tauri/Cargo.toml`: passed.
 - `cargo test --manifest-path src-tauri/Cargo.toml`: passed with approved local TCP binding for tests that need `127.0.0.1` fixtures; 62 Rust tests passed.
+- P3.1 validation passed after the proxy split: `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, `cargo check --manifest-path src-tauri/Cargo.toml`, `cargo test --manifest-path src-tauri/Cargo.toml proxy::`, full `cargo test --manifest-path src-tauri/Cargo.toml`, `pnpm check:static`, `pnpm build`, and `git diff --check`.
+- P3.2 validation passed after the frontend app split: Node syntax checks for `frontend/js/app.js`, all `frontend/js/app/*.js` fragments, and `scripts/build-app-bundle.mjs`; `pnpm check:static`; `pnpm build`; and `git diff --check`.
+- P3.3 validation passed after the stylesheet split: app and style bundle freshness checks, Node syntax check for `scripts/build-style-bundle.mjs`, `pnpm check:static`, `pnpm build`, `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`, `cargo check --manifest-path src-tauri/Cargo.toml`, `cargo test --manifest-path src-tauri/Cargo.toml` with approved local TCP binding, and `git diff --check`.
 - GitHub Actions Release workflow run `#22`: passed for Windows release artifact generation and upload before P2 cleanup.
 - Published `latest.json` metadata check: passed before P2 cleanup; `windows-x64` lists Portable ZIP, Windows x64 EXE, and Windows Setup.
 
 ## Remaining Work
 
-- P2 is complete. Next priority is P3: split large source files without changing behavior, starting with `src-tauri/src/proxy/mod.rs`.
+- P3 is complete. Next priority is P4.2: decide whether tracked `codex_history/` archives should stay in the public repository.

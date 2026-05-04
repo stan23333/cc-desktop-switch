@@ -1,8 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildAppBundle } from './build-app-bundle.mjs';
+import { buildStyleBundle } from './build-style-bundle.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+
+await buildAppBundle({ check: true });
+await buildStyleBundle({ check: true });
 
 async function text(path) {
   return readFile(join(root, path), 'utf8');
