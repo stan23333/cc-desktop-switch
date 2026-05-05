@@ -422,13 +422,17 @@ fn resolve_from_root(root: &Path, path: &Path) -> PathBuf {
 }
 
 fn invoke_tauri_build(root: &Path, args: &[&str]) -> DynResult<()> {
-    let mut command = Command::new("pnpm");
+    let mut command = Command::new(pnpm_program_name());
     command
         .current_dir(root)
         .arg("tauri")
         .arg("build")
         .args(args);
     run_command(&mut command, "Tauri build")
+}
+
+fn pnpm_program_name() -> &'static str {
+    if cfg!(windows) { "pnpm.cmd" } else { "pnpm" }
 }
 
 fn invoke_optional_code_signing(
@@ -1037,6 +1041,15 @@ mod tests {
             .unwrap();
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pnpm_program_uses_windows_command_shim() {
+        if cfg!(windows) {
+            assert_eq!(pnpm_program_name(), "pnpm.cmd");
+        } else {
+            assert_eq!(pnpm_program_name(), "pnpm");
+        }
     }
 
     fn unique_temp_dir(prefix: &str) -> PathBuf {
