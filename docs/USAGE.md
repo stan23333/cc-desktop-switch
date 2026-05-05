@@ -18,22 +18,23 @@
 CC-Desktop-Switch-v<最新版本>-Windows-Setup.exe
 ```
 
-安装版默认安装到当前用户目录，会创建开始菜单和桌面快捷方式，不需要管理员权限，适合公司电脑上无法审批管理员安装的场景。
-
 也可以使用便携版：
 
 ```text
 CC-Desktop-Switch-v<最新版本>-Windows-Portable.zip
 ```
 
-便携版解压后直接运行里面的 `CC-Desktop-Switch.exe`。它不会写入安装记录，也不会自动创建桌面或开始菜单快捷方式；如果想固定入口，请手动为解压后的 exe 创建快捷方式。
+macOS 版本由 macOS 维护者单独同步。如果 Release 页面出现对应的 DMG 或 PKG，DMG 打开后把应用拖到“应用程序”；PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。
 
-macOS 用户可以下载 Release 页面里的 DMG 或 PKG。DMG 打开后把应用拖到“应用程序”；PKG 会安装到 `/Applications/CC Desktop Switch.app`，再次安装或安装新版本时会替换该位置的旧应用。
+启动后会打开一个桌面窗口。浏览器地址只是备用入口：
 
-启动后会打开一个桌面窗口。
+```text
+http://127.0.0.1:18081
+```
 
 默认端口：
 
+- 管理界面：`18081`
 - 本机转发服务：`18080`，仅实验兼容接口或调试时需要。
 
 ### 2. 添加提供商
@@ -104,7 +105,6 @@ Claude 桌面版 -> 你的 API 提供商
 ### 5. 重启 Claude Desktop
 
 应用完成后，关闭并重新打开 Claude Desktop。
-新版本会在应用成功后弹出重启提醒，你可以直接点击“立即重启”。如果不想让本工具关闭 Claude Desktop，也可以点“稍后重启”后手动完整退出并重新打开。
 
 然后在 Claude Desktop 里发一条简单消息。如果失败，先核对 API Key、余额、模型名和 Claude Desktop 是否完整重启。实验转发模式再回到 CC Desktop Switch 的“代理”页面看日志。
 

@@ -23,21 +23,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          node-version: "24"
+          python-version: "3.11"
 
-      - name: Enable pnpm
+      - name: Install Python dependencies
         shell: powershell
-        run: corepack enable
-
-      - name: Install JavaScript dependencies
-        shell: powershell
-        run: pnpm install --frozen-lockfile
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
 
       - name: Install NSIS
         shell: powershell
@@ -56,21 +51,20 @@ jobs:
           }
 
           $args = @(
-            "run",
-            "-p", "xtask",
-            "--",
-            "release", "windows",
-            "--version", $version,
-            "--build",
-            "--try-installer",
-            "--repository", $env:GITHUB_REPOSITORY
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", "scripts\New-Release.ps1",
+            "-Version", $version,
+            "-Build",
+            "-TryInstaller",
+            "-Repository", $env:GITHUB_REPOSITORY
           )
 
           if ($env:WINDOWS_CODESIGN_PFX_BASE64) {
-            $args += "--code-sign"
+            $args += "-CodeSign"
           }
 
-          cargo @args
+          powershell @args
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
@@ -80,12 +74,12 @@ jobs:
       - name: Verify release signatures
         shell: powershell
         run: |
-          cargo run -p xtask -- release verify --file "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe"
-          cargo run -p xtask -- release verify --file "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip"
-          cargo run -p xtask -- release verify --file "release\latest.json"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-x64.exe"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Portable.zip"
+          powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File "release\latest.json"
           $setup = "release\CC-Desktop-Switch-v$env:RELEASE_VERSION-Windows-Setup.exe"
           if (Test-Path -LiteralPath $setup) {
-            cargo run -p xtask -- release verify --file $setup
+            powershell -NoProfile -ExecutionPolicy Bypass -File scripts\Test-ReleaseSignature.ps1 -File $setup
           }
 
       - name: Ensure release tag for manual run
@@ -108,13 +102,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v$env:RELEASE_VERSION"
-          $notesPath = "docs\releases\v$env:RELEASE_VERSION.md"
+          $notesPath = "docs\release-notes-v$env:RELEASE_VERSION.md"
+          $notes = "Windows release for CC Desktop Switch v$env:RELEASE_VERSION."
           if (Test-Path -LiteralPath $notesPath) {
-            $notesArgs = @("--notes-file", $notesPath)
-          } else {
-            $fallbackNotesPath = "release-notes-fallback.md"
-            Set-Content -LiteralPath $fallbackNotesPath -Value "Windows release for CC Desktop Switch v$env:RELEASE_VERSION." -Encoding utf8
-            $notesArgs = @("--notes-file", $fallbackNotesPath)
+            $notes = Get-Content -LiteralPath $notesPath -Raw -Encoding utf8
           }
           $assets = Get-ChildItem -LiteralPath "release" -File | ForEach-Object { $_.FullName }
           if (-not $assets) {
@@ -126,5 +117,5 @@ jobs:
           if ($releaseExists) {
             gh release upload $tag @assets --repo $env:GITHUB_REPOSITORY --clobber
           } else {
-            gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --title "CC Desktop Switch $tag" @notesArgs --verify-tag
+            gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --title "CC Desktop Switch $tag" --notes $notes --verify-tag
           }

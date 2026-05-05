@@ -4,15 +4,14 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CC Desktop Switch</title>
-    <link href="vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet">
-    <link href="vendor/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <link rel="icon" href="assets/app-icon.png">
     <link href="css/style.css" rel="stylesheet">
   </head>
   <body>
     <header class="app-header">
       <div class="header-actions-left">
-        <button class="btn btn-outline-primary btn-sm dashboard-feedback-button" type="button" data-action="open-feedback"><i class="bi bi-chat-dots"></i><span data-i18n="dashboard.feedback">反馈</span></button>
         <button class="btn btn-outline-primary btn-sm dashboard-import-button" type="button" data-action="open-ccswitch-import"><i class="bi bi-box-arrow-in-down"></i><span data-i18n="dashboard.importCcSwitch">导入 CC Switch 配置</span></button>
         <button class="btn btn-outline-danger btn-sm dashboard-clear-button" type="button" data-action="clear-desktop"><i class="bi bi-trash"></i><span data-i18n="dashboard.clearDesktopConfig">清除桌面版配置</span></button>
       </div>
@@ -249,7 +248,6 @@
                 <p data-i18n="desktop.explainText">原理很简单：Claude 桌面版先连接到本工具；本工具再把 Claude 的模型名翻译成你选择的供应商模型，并转发到对应 API。你的上游 API Key 只保存在本机配置里，不直接写进 Claude 桌面版。</p>
               </div>
               <button class="btn btn-primary btn-lg w-100" type="button" data-action="apply-desktop"><i class="bi bi-download"></i><span data-i18n="desktop.apply">应用到 Claude 桌面版</span></button>
-              <button class="btn btn-outline-primary btn-lg w-100 mt-2" type="button" data-action="restart-claude"><i class="bi bi-arrow-clockwise"></i><span data-i18n="desktop.restartClaude">重启 Claude 桌面版</span></button>
             </article>
             <article class="panel details-panel">
               <div class="panel-header">
@@ -388,15 +386,6 @@
               <p class="settings-note" data-i18n="settings.configBackupHint">导出的配置会包含 API Key，请只保存在可信设备上。</p>
             </div>
           </div>
-          <div class="settings-row settings-row-stack">
-            <strong data-i18n="settings.feedback">反馈与建议</strong>
-            <div>
-              <div class="settings-actions">
-                <button class="btn btn-outline-primary btn-sm" type="button" data-action="open-feedback"><i class="bi bi-chat-dots"></i><span data-i18n="settings.feedbackOpen">打开反馈窗口</span></button>
-              </div>
-              <p class="settings-note" data-i18n="settings.feedbackHint">遇到问题或想提建议？支持文本、截图和日志，匿名提交，无需登录。诊断信息默认附上，不含 API Key 或供应商地址。</p>
-            </div>
-          </div>
           <div class="settings-row settings-row-stack" id="ccSwitchImportSection">
             <strong data-i18n="settings.ccswitchImport">CC-Switch 导入</strong>
             <div>
@@ -412,7 +401,7 @@
 
         <article class="panel about-panel">
           <h2 data-i18n="settings.about">关于</h2>
-          <div class="about-row"><span data-i18n="settings.version">版本</span><strong>1.1.1</strong></div>
+          <div class="about-row"><span data-i18n="settings.version">版本</span><strong>1.0.17</strong></div>
           <div class="about-row"><span data-i18n="settings.license">许可证</span><strong>MIT License</strong></div>
           <div class="about-row"><span data-i18n="settings.checkUpdate">检查更新</span><span class="settings-actions inline-actions"><button class="btn btn-outline-primary btn-sm" type="button" data-action="check-update"><i class="bi bi-cloud-arrow-down"></i><span data-i18n="settings.checkUpdate">检查更新</span></button><button class="btn btn-primary btn-sm" id="settingsInstallUpdate" type="button" data-action="install-update" hidden><i class="bi bi-download"></i><span data-i18n="settings.installUpdate">下载并安装</span></button></span></div>
           <p class="update-status" id="updateStatus"></p>
@@ -453,22 +442,6 @@
       </div>
     </div>
 
-    <div class="modal fade" id="confirmModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title" data-i18n="confirm.title">确认操作</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body" id="confirmModalBody"></div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-i18n="common.cancel">取消</button>
-            <button type="button" class="btn btn-primary" id="confirmModalConfirm" data-i18n="common.confirm">确认</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div class="modal fade" id="restartReminderModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
       <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content restart-modal-content">
@@ -480,49 +453,7 @@
           </div>
           <div class="modal-footer restart-modal-footer">
             <label class="restart-reminder-check"><input type="checkbox" id="restartReminderDontShow"><span data-i18n="restartReminder.dontShow">不再提醒</span></label>
-            <div class="restart-modal-actions">
-              <button type="button" class="btn btn-outline-secondary" id="restartReminderAck" data-i18n="restartReminder.ack">稍后重启</button>
-              <button type="button" class="btn btn-primary" id="restartReminderNow"><i class="bi bi-arrow-clockwise"></i><span data-i18n="restartReminder.restartNow">立即重启</span></button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="modal fade" id="feedbackModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title" data-i18n="feedback.title">反馈与建议</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <p class="settings-note" data-i18n="feedback.intro">欢迎反馈使用问题或改进建议。提交内容会发送到开发者维护的私有存储，不会公开。</p>
-            <div class="form-group">
-              <label for="feedbackTitle" data-i18n="feedback.titleLabel">标题（选填）</label>
-              <input class="form-control" type="text" id="feedbackTitle" maxlength="100" data-i18n-attr="placeholder|feedback.titlePlaceholder" placeholder="一句话概括问题">
-            </div>
-            <div class="form-group">
-              <label for="feedbackBody" data-i18n="feedback.bodyLabel">详细描述 *</label>
-              <textarea class="form-control" id="feedbackBody" rows="6" maxlength="10000" data-i18n-attr="placeholder|feedback.bodyPlaceholder" placeholder="请尽量描述清楚：发生了什么、你期望的是什么、如何复现"></textarea>
-            </div>
-            <div class="form-group">
-              <label data-i18n="feedback.attachmentsLabel">附件（选填，可多个，单文件最大 5MB）</label>
-              <div class="feedback-dropzone" id="feedbackDropzone">
-                <input type="file" id="feedbackFiles" multiple accept="image/*,.log,.txt,.json" hidden>
-                <p class="feedback-dropzone-hint" data-i18n="feedback.attachmentsHint">点击选择文件 / 直接拖拽到此处 / Cmd+V 粘贴截图</p>
-                <ul class="feedback-attachment-list" id="feedbackAttachmentList"></ul>
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="switch-label"><input type="checkbox" id="feedbackIncludeDiagnostics" checked><span class="switch-ui"></span><strong data-i18n="feedback.includeDiagnostics">附加诊断信息（默认开启，推荐）</strong></label>
-              <p class="settings-note" data-i18n="feedback.includeDiagnosticsHint">应用版本 / OS / 当前提供商名称 / 最近 200 行代理日志。不含 API Key 或供应商地址。</p>
-            </div>
-            <p class="settings-note feedback-warning" data-i18n="feedback.privacyWarning">截图请检查是否含 API Key、个人信息等敏感内容。</p>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal" data-i18n="common.cancel">取消</button>
-            <button type="button" class="btn btn-primary" id="feedbackSubmitBtn" data-i18n="feedback.submit">提交反馈</button>
+            <button type="button" class="btn btn-primary" id="restartReminderAck" data-i18n="restartReminder.ack">我已知晓</button>
           </div>
         </div>
       </div>
@@ -534,9 +465,8 @@
       </div>
     </div>
 
-    <script src="vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
-    <script src="js/generated/contracts.js"></script>
-    <script src="js/tauri-api.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="js/api.js"></script>
     <script src="js/i18n.js"></script>
     <script src="js/app.js"></script>
   </body>
