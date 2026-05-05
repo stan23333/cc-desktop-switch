@@ -614,7 +614,7 @@ mod tests {
 
     fn config_with_provider(provider: Provider) -> AppConfig {
         AppConfig {
-            version: "1.1.0".to_string(),
+            version: "1.1.1".to_string(),
             active_provider: Some(provider.id.clone()),
             gateway_api_key: None,
             providers: vec![provider],

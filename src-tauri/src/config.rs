@@ -14,7 +14,7 @@ use crate::models::{
 };
 
 const APP_NAME: &str = "CC Desktop Switch";
-const APP_VERSION: &str = "1.1.0";
+const APP_VERSION: &str = "1.1.1";
 const CONFIG_DIR_NAME: &str = ".cc-desktop-switch";
 const CONFIG_FILE_NAME: &str = "config.json";
 const BACKUP_DIR_NAME: &str = "backups";

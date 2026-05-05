@@ -157,7 +157,7 @@ Supported stable path:
 - Anthropic-compatible APIs are the recommended path.
 - The default Windows and macOS flow writes the selected provider directly into Claude Desktop's local configuration. After applying and fully restarting Claude Desktop, the selected provider can keep working even if CC Desktop Switch is closed.
 - The generic third-party model entry can connect manually configured Anthropic / OpenAI-compatible endpoints that are not built in as presets.
-- The v1.1.0 desktop runtime uses Tauri + Rust while keeping the existing provider-management UI.
+- The desktop runtime uses Tauri + Rust while keeping the existing provider-management UI.
 - DeepSeek 1M context, DeepSeek Max effort, and Qwen 1M context can be enabled from the provider edit page.
 - Model availability check lets you verify a model works with a minimal chat request before relying on it.
 - Custom upstream HTTP proxy with auto-detection and an on/off toggle.

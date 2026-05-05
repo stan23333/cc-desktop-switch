@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -709,12 +709,7 @@ fn enterprise_config(
     );
     object.insert(
         "inferenceModels".to_string(),
-        Value::Array(
-            json_model_names(inference_models)
-                .into_iter()
-                .map(Value::String)
-                .collect(),
-        ),
+        Value::Array(json_inference_models(inference_models)),
     );
     object.insert(
         "isClaudeCodeForDesktopEnabled".to_string(),
@@ -723,7 +718,7 @@ fn enterprise_config(
     object
 }
 
-fn json_model_names(inference_models: &str) -> Vec<String> {
+fn json_inference_models(inference_models: &str) -> Vec<Value> {
     let default_models;
     let raw_models = if inference_models.is_empty() {
         default_models = default_inference_models_json();
@@ -734,23 +729,45 @@ fn json_model_names(inference_models: &str) -> Vec<String> {
     let parsed =
         serde_json::from_str::<Value>(raw_models).unwrap_or_else(|_| Value::Array(Vec::new()));
     let mut result = Vec::new();
+    let mut seen = BTreeSet::new();
     if let Some(items) = parsed.as_array() {
         for item in items {
-            let name = if let Some(object) = item.as_object() {
-                object.get("name").and_then(Value::as_str).unwrap_or("")
+            if let Some(object) = item.as_object() {
+                let name = object
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if name.is_empty() || !seen.insert(name.to_string()) {
+                    continue;
+                }
+                let mut clean = Map::new();
+                clean.insert("name".to_string(), Value::String(name.to_string()));
+                if let Some(display_name) = object.get("displayName").and_then(Value::as_str) {
+                    let display_name = display_name.trim();
+                    if !display_name.is_empty() {
+                        clean.insert(
+                            "displayName".to_string(),
+                            Value::String(display_name.to_string()),
+                        );
+                    }
+                }
+                if object.get("supports1m").and_then(Value::as_bool) == Some(true) {
+                    clean.insert("supports1m".to_string(), Value::Bool(true));
+                }
+                result.push(Value::Object(clean));
             } else {
-                item.as_str().unwrap_or("")
-            };
-            let name = name.trim();
-            if !name.is_empty() && !result.iter().any(|existing| existing == name) {
-                result.push(name.to_string());
+                let name = item.as_str().unwrap_or("").trim();
+                if !name.is_empty() && seen.insert(name.to_string()) {
+                    result.push(Value::String(name.to_string()));
+                }
             }
         }
     }
     if result.is_empty() {
         DEFAULT_INFERENCE_MODELS
             .iter()
-            .map(|name| (*name).to_string())
+            .map(|name| Value::String((*name).to_string()))
             .collect()
     } else {
         result
@@ -941,7 +958,13 @@ mod tests {
             enterprise["inferenceGatewayHeaders"],
             json!(["x-api-key: secret-value"])
         );
-        assert_eq!(enterprise["inferenceModels"], json!(["model-a", "model-b"]));
+        assert_eq!(
+            enterprise["inferenceModels"],
+            json!([
+                {"name": "model-a", "displayName": "Model A"},
+                {"name": "model-b", "supports1m": true}
+            ])
+        );
         assert_eq!(enterprise["isClaudeCodeForDesktopEnabled"], true);
     }
 
@@ -978,7 +1001,13 @@ mod tests {
             saved["inferenceGatewayHeaders"],
             json!(["x-api-key: secret-value"])
         );
-        assert_eq!(saved["inferenceModels"], json!(["model-a", "model-b"]));
+        assert_eq!(
+            saved["inferenceModels"],
+            json!([
+                {"name": "model-a"},
+                {"name": "model-b", "supports1m": true}
+            ])
+        );
     }
 
     #[test]

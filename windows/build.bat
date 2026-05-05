@@ -6,7 +6,7 @@ cd /d "%~dp0\.."
 :MENU
 cls
 echo ========================================
-echo    CC Desktop Switch v1.1.0 - Tauri Build
+echo    CC Desktop Switch v1.1.1 - Tauri Build
 echo ========================================
 echo.
 echo  请选择打包方式：

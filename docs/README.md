@@ -12,7 +12,7 @@ This directory keeps user-facing guides, release notes, implementation plans, an
 Release notes are grouped under [`releases/`](releases/). Use `v<version>.md` for new releases, for example:
 
 ```text
-docs/releases/v1.1.0.md
+docs/releases/v1.1.1.md
 ```
 
 The GitHub Release workflow reads release notes from this directory.

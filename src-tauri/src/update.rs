@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::config::ConfigStore;
 use crate::models::UpdateProgress;
 
-const APP_VERSION: &str = "1.1.0";
+const APP_VERSION: &str = "1.1.1";
 
 #[derive(Clone, Default)]
 pub struct UpdateRuntime {
