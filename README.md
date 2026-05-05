@@ -14,6 +14,8 @@ v1.1.0 起，桌面运行时迁移到 **Tauri + Rust**，保留原有 HTML/CSS/J
 
 Windows 和 macOS 稳定路径默认使用直连配置：完成“一键应用”并重启 Claude Desktop 后，即使关闭本工具，Claude Desktop 仍可以继续使用当前供应商。OpenAI / new-api / 反代类接口属于实验兼容路径，必要时才使用本机转发服务。
 
+当前代码以 Rust 为运行时和工具链主语言。`xtask` 负责前端打包、静态契约检查、共享模型槽位契约生成、Windows release 资产整理和 macOS 包装编排；JavaScript 保留为 Tauri WebView 的界面层，不再承担应用运行时逻辑。
+
 macOS 提供独立 App、PKG 和 DMG 产物；Linux 可以运行管理后台和代理，但 Claude Desktop 没有对应 GUI 版本。
 
 ## 界面预览
@@ -189,18 +191,41 @@ pnpm install
 pnpm tauri dev
 ```
 
-Windows 发布打包现在由 Rust `xtask` 编排，`cargo run -p xtask -- release windows --build --try-installer` 会调用 Tauri 构建并整理 Setup、Portable ZIP、x64 EXE 和 `latest.json`。`windows/build.bat` 只保留为 Windows 本地手动构建入口。
-
-## 验证
+常用开发命令：
 
 ```bash
 pnpm build
 pnpm check:static
-cargo check --manifest-path src-tauri/Cargo.toml
+pnpm tauri dev
+```
+
+`pnpm build` 会通过 Rust `xtask` 重新生成前端 app/style bundle、共享契约文件，并把 `frontend/` 复制到 `dist/`。`pnpm check:static` 会检查生成文件是否最新、`CCApi` 桥接方法是否完整，以及 `tauri-api.js` 调用的 Tauri 命令是否已在 Rust 中注册。
+
+Windows 发布打包现在由 Rust `xtask` 编排，`cargo run -p xtask -- release windows --build --try-installer` 会调用 Tauri 构建并整理 Setup、Portable ZIP、x64 EXE 和 `latest.json`。macOS 包装入口是 `cargo run -p xtask -- package macos`，现有 `macos/make-pkg.sh` 和 `macos/make-dmg.sh` 只保留为薄包装入口。`windows/build.bat` 只保留为 Windows 本地手动构建入口。
+
+## 验证
+
+```bash
+pnpm check:static
 node --check frontend/js/app.js
 node --check frontend/js/i18n.js
 node --check frontend/js/tauri-api.js
+cargo fmt --check
+cargo check -p xtask
+cargo test -p xtask
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo check --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
+pnpm build
 ```
+
+macOS 本地 App 验证可以运行：
+
+```bash
+pnpm tauri build --bundles app --no-sign
+```
+
+生成的未签名 App 位于 `src-tauri/target/release/bundle/macos/CC Desktop Switch.app`。
 
 ## Troubleshooting
 
@@ -243,6 +268,7 @@ netstat -ano | findstr :18080
 - 桌面运行时：Tauri 2, Rust
 - 前端：HTML, CSS, Vanilla JavaScript, Bootstrap 5.3
 - 存储：`~/.cc-desktop-switch/config.json`
+- 工具链：Rust `xtask`
 - 打包：Tauri CLI, Tauri NSIS bundler, macOS PKG/DMG wrapper scripts
 
 ## 安全说明

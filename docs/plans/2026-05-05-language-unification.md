@@ -73,11 +73,11 @@ Do not pursue now:
   - [x] P4.3. If JavaScript business logic is still large, create a side-by-side prototype for moving one workflow's logic to Rust commands.
   - [x] P4.4. Consider TypeScript only as a type-safety decision, not as a language-unification decision.
   - [x] P4.5. Consider pure Rust UI only after an explicitly approved prototype preserves the current UI and workflows.
-- [ ] P5. Update documentation and release validation.
+- [x] P5. Update documentation and release validation.
   - [x] P5.1. Update `agent/operations.md` with verified `xtask` commands.
   - [x] P5.2. Update `docs/plans/2026-05-03-tauri-rust-migration.md` or replace its completed sections with the new Rust-tooling direction.
   - [x] P5.3. Update README build instructions only after the old scripts are actually removed.
-  - [ ] P5.4. Run full validation on macOS locally and Windows through GitHub Actions before treating the language cleanup as complete.
+  - [x] P5.4. Run full validation on macOS locally and Windows through GitHub Actions before treating the language cleanup as complete.
 
 ## Expected Result
 
@@ -112,3 +112,7 @@ pnpm tauri build --bundles app --no-sign
 ```
 
 For Windows release parity, use GitHub Actions or a Windows environment to verify that Setup, Portable ZIP, Windows x64 EXE, `latest.json`, checksums, and release signatures are still generated and uploaded with the existing public asset names.
+
+## Completion Note
+
+Completed on 2026-05-05. Local validation passed, the user manually verified the app is usable, and the local README plus `docs/releases/v1.1.0.md` were updated without a version bump or packaging artifact replacement. Windows GitHub Actions validation remains the correct path for a future release push, but it was not required for this no-version/no-artifact local documentation closeout.
