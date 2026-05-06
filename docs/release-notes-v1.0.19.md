@@ -21,7 +21,8 @@
 ### 下载建议
 
 - Windows 用户可以下载 `CC-Desktop-Switch-v1.0.19-Windows-Setup.exe` 或 `CC-Desktop-Switch-v1.0.19-Windows-Portable.zip`。
-- 本轮本地测试包只生成 Windows 资产；macOS 资产由 macOS 维护者单独同步。
+- macOS arm64 用户可以下载 `CC-Desktop-Switch-v1.0.19-macOS-arm64.pkg` 或 `CC-Desktop-Switch-v1.0.19-macOS-arm64.dmg`。
+- macOS 包已在 GitHub Actions 的 macOS runner 上完成构建、无界面启动 smoke test、PKG 展开校验和 DMG verify。
 
 ## English
 
@@ -44,4 +45,5 @@ This release narrows the Claude Desktop model menu to only explicitly mapped Cla
 ### Downloads
 
 - Windows users can choose `CC-Desktop-Switch-v1.0.19-Windows-Setup.exe` or `CC-Desktop-Switch-v1.0.19-Windows-Portable.zip`.
-- This local test build only includes Windows assets. macOS assets are synchronized separately by the macOS maintainer.
+- macOS arm64 users can choose `CC-Desktop-Switch-v1.0.19-macOS-arm64.pkg` or `CC-Desktop-Switch-v1.0.19-macOS-arm64.dmg`.
+- The macOS package was built on a GitHub Actions macOS runner and passed a headless startup smoke test, PKG expansion check, and DMG verification.
