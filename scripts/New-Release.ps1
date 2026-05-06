@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "1.0.17",
+    [string]$Version = "1.0.19",
     [string]$OutputDir = "release",
     [switch]$Build,
     [switch]$TryInstaller,
@@ -195,7 +195,11 @@ function Invoke-OptionalCodeSigning {
 }
 
 $root = Get-ProjectRoot
-$releaseDir = Join-Path $root $OutputDir
+if ([System.IO.Path]::IsPathRooted($OutputDir)) {
+    $releaseDir = $OutputDir
+} else {
+    $releaseDir = Join-Path $root $OutputDir
+}
 $distDir = Join-Path $root "dist"
 $folderDist = Join-Path $distDir "CC-Desktop-Switch"
 $oneFileExe = Join-Path $distDir "CC-Desktop-Switch.exe"

@@ -119,3 +119,96 @@ jobs:
           } else {
             gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --title "CC Desktop Switch $tag" --notes $notes --verify-tag
           }
+
+  macos:
+    name: macOS release
+    runs-on: macos-latest
+    needs: windows
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build macOS assets
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          if [[ -z "$version" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          arch="$(uname -m)"
+          if [[ "$arch" == "x86_64" ]]; then
+            release_arch="x64"
+          else
+            release_arch="$arch"
+          fi
+
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "RELEASE_ARCH=$release_arch" >> "$GITHUB_ENV"
+          CCDS_VERSION="$version" ./macos/build-macos.sh
+
+      - name: Smoke test macOS app bundle
+        shell: bash
+        run: |
+          app_exe="dist/mac/CC Desktop Switch.app/Contents/MacOS/CC-Desktop-Switch"
+          if [[ ! -x "$app_exe" ]]; then
+            echo "App executable not found: $app_exe" >&2
+            exit 1
+          fi
+
+          export HOME="$RUNNER_TEMP/ccds-home"
+          mkdir -p "$HOME"
+          "$app_exe" --server-only --port 19081 > "$RUNNER_TEMP/ccds-macos-smoke.log" 2>&1 &
+          app_pid=$!
+          cleanup() {
+            kill "$app_pid" 2>/dev/null || true
+            wait "$app_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ok=0
+          for _ in {1..60}; do
+            if curl -fsS "http://127.0.0.1:19081/api/status" >/dev/null; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ "$ok" != "1" ]]; then
+            cat "$RUNNER_TEMP/ccds-macos-smoke.log" >&2
+            exit 1
+          fi
+
+      - name: Verify macOS packages
+        shell: bash
+        run: |
+          pkg="dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.pkg"
+          dmg="dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.dmg"
+
+          test -f "$pkg"
+          test -f "$dmg"
+          pkgutil --expand "$pkg" "$RUNNER_TEMP/pkg-expanded"
+          hdiutil verify "$dmg"
+
+          (cd dist/mac && shasum -a 256 "CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.pkg" > "CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.pkg.sha256")
+          (cd dist/mac && shasum -a 256 "CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.dmg" > "CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.dmg.sha256")
+
+      - name: Upload macOS assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${RELEASE_VERSION}"
+          assets=(
+            "dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.pkg"
+            "dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.pkg.sha256"
+            "dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.dmg"
+            "dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-${RELEASE_ARCH}.dmg.sha256"
+          )
+          gh release upload "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber

@@ -52,6 +52,11 @@ CLAUDE_ID_TO_SLOT = {
     for slot in MODEL_SLOTS
     for claude_id in slot["claude_ids"]
 }
+DESKTOP_ROUTE_IDS = tuple(
+    claude_id
+    for slot in MODEL_SLOTS
+    for claude_id in slot["claude_ids"]
+)
 
 
 def empty_model_mappings() -> dict:
@@ -88,19 +93,16 @@ def model_mappings_with_legacy_aliases(models: Optional[dict]) -> dict:
     compat["sonnet"] = (
         normalized.get("sonnet_4_6")
         or normalized.get("sonnet_4_5")
-        or normalized.get("default")
         or ""
     )
     compat["opus"] = (
         normalized.get("opus_4_7")
         or normalized.get("opus_4_6")
         or normalized.get("opus_3")
-        or normalized.get("default")
         or ""
     )
     compat["haiku"] = (
         normalized.get("haiku_4_5")
-        or normalized.get("default")
         or ""
     )
     return compat
@@ -143,8 +145,49 @@ def model_supports_1m(provider: dict, model_id: str) -> bool:
     )
 
 
+def desktop_model_entries(provider: Optional[dict], use_alias: bool = False) -> list[dict]:
+    """生成 Claude Desktop / gateway 可见的显式安全路由模型条目。"""
+    if not provider:
+        return []
+    raw_models = provider.get("models") or {}
+    if not isinstance(raw_models, dict):
+        raw_models = {}
+    normalized = normalize_model_mappings(raw_models)
+    provider_name = str(provider.get("name") or provider.get("id") or "Provider")
+    entries: list[dict] = []
+    seen: set[str] = set()
+
+    def add_entry(route_id: str, source_model: str) -> None:
+        route_id = str(route_id or "").strip()
+        source_model = str(source_model or "").strip()
+        if not route_id or not source_model:
+            return
+        name = model_alias(provider, route_id) if use_alias else route_id
+        if name in seen:
+            return
+        seen.add(name)
+        item = {
+            "name": name,
+            "displayName": f"{provider_name} / {route_id}" if use_alias else route_id,
+            "sourceModel": source_model,
+            "providerId": provider.get("id"),
+        }
+        if model_supports_1m(provider, source_model):
+            item["supports1m"] = True
+        entries.append(item)
+
+    for slot in MODEL_SLOTS:
+        if slot["key"] == DEFAULT_MODEL_KEY or not slot["claude_ids"]:
+            continue
+        source_model = normalized.get(slot["key"])
+        if source_model:
+            add_entry(slot["claude_ids"][0], source_model)
+
+    return entries
+
+
 def provider_model_entries(provider: Optional[dict], use_alias: bool = False) -> list[dict]:
-    """生成 inferenceModels / /v1/models 共用的模型条目。"""
+    """生成真实上游模型条目；不要直接用于 Claude Desktop 暴露面。"""
     if not provider:
         return []
     entries: list[dict] = []
@@ -164,13 +207,13 @@ def provider_model_entries(provider: Optional[dict], use_alias: bool = False) ->
 
 
 def all_provider_model_entries(providers: list[dict]) -> list[dict]:
-    """生成所有 provider 的去重别名模型条目。"""
+    """生成所有 provider 的去重安全路由模型条目。"""
     entries: list[dict] = []
     seen: set[str] = set()
     for provider in providers:
         if not provider:
             continue
-        for item in provider_model_entries(provider, use_alias=True):
+        for item in desktop_model_entries(provider, use_alias=True):
             name = item["name"]
             if name in seen:
                 continue
@@ -189,6 +232,9 @@ def resolve_model_alias(providers: list[dict], requested_model: str) -> tuple[Op
         return None, requested, False
     for provider in providers:
         if provider_slug(provider) == slug:
+            for item in desktop_model_entries(provider):
+                if model_id == item.get("name"):
+                    return provider, model_id, True
             if model_id in provider_model_ids(provider):
                 return provider, model_id, True
             # 允许用户手动写入未出现在映射里的模型 ID。
@@ -223,3 +269,8 @@ def resolve_requested_model_slot(requested_model: str) -> Optional[str]:
             return "opus_3"
         return "opus"
     return None
+
+
+def desktop_route_ids() -> tuple[str, ...]:
+    """返回 Claude Desktop 可见的安全 route ID 集合。"""
+    return DESKTOP_ROUTE_IDS

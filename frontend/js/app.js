@@ -7,7 +7,7 @@
     { key: "opus", title: "Opus", icon: "bi-box", source: "claude-opus-4-7" },
   ];
   const providerFormModelSlots = [
-    { key: "default", label: "Default", icon: "bi-circle-fill", iconClass: "default", source: "未配置映射时默认使用这一项", required: true },
+    { key: "default", label: "Default", icon: "bi-circle-fill", iconClass: "default", source: "仅作为内部后备，不显示在 Claude Desktop 菜单", required: true },
     { key: "opus_4_7", label: "Opus 4.7", icon: "bi-box", iconClass: "opus", source: "claude-opus-4-7" },
     { key: "opus_4_6", label: "Opus 4.6", icon: "bi-box", iconClass: "opus", source: "claude-opus-4-6" },
     { key: "opus_3", label: "Opus 3", icon: "bi-box", iconClass: "opus", source: "claude-3-opus" },
@@ -105,6 +105,33 @@
       }
     }
     restartReminderModal?.hide();
+  }
+
+  async function ensureDesktopProxy(result = {}) {
+    const next = { ...result };
+    if (!next.requiresProxy || next.proxyStarted) return next;
+    try {
+      const proxy = await CCApi.startProxy(next.proxyPort);
+      next.proxyStarted = !!proxy.running;
+      next.proxyPort = proxy.port || next.proxyPort;
+      if (next.proxyStarted && next.configSuccess !== false) {
+        next.success = true;
+      } else if (!next.proxyStarted) {
+        next.success = false;
+        next.message = next.message || t("toast.requestFailed");
+      }
+    } catch (error) {
+      next.success = false;
+      next.proxyStarted = false;
+      next.message = error.message || next.message || t("toast.requestFailed");
+    }
+    return next;
+  }
+
+  function desktopApplySucceeded(result = {}) {
+    if (result.success) return true;
+    showToast(result.message || t("toast.requestFailed"));
+    return false;
   }
 
   function t(key) {
@@ -1588,10 +1615,8 @@
     try {
       const provider = await saveProviderFromForm();
       await CCApi.setDefaultProvider(provider.id);
-      const desktopResult = await CCApi.configureDesktop();
-      if (desktopResult.requiresProxy) {
-        await CCApi.startProxy();
-      }
+      const desktopResult = await ensureDesktopProxy(await CCApi.configureDesktop());
+      if (!desktopApplySucceeded(desktopResult)) return;
       editingProviderId = null;
       selectedPreset = null;
       window.location.hash = "dashboard";
@@ -1617,7 +1642,7 @@
       if (action === "set-default") {
         const result = await CCApi.setDefaultProvider(actionEl.dataset.id);
         if (result.desktopSync?.requiresProxy) {
-          await CCApi.startProxy();
+          result.desktopSync = await ensureDesktopProxy(result.desktopSync);
         }
         await renderProviderCards("#dashboardProviderCards", { includePresets: true });
         await renderProviders();
@@ -1845,8 +1870,9 @@
 
       if (action === "apply-desktop") {
         if (!window.confirm(t("confirm.desktopApply"))) return;
-        await CCApi.configureDesktop();
+        const desktopResult = await ensureDesktopProxy(await CCApi.configureDesktop());
         await renderDesktop();
+        if (!desktopApplySucceeded(desktopResult)) return;
         showToast(t("toast.desktopApplied"));
       }
 

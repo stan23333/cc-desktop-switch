@@ -25,7 +25,7 @@ from backend import provider_tools
 from backend import registry
 from backend import update as updater
 from backend.api_adapters import normalize_api_format
-from backend.model_alias import provider_model_ids
+from backend.model_alias import desktop_route_ids, provider_model_ids
 from backend.proxy import (
     build_upstream_url,
     create_proxy_app,
@@ -38,6 +38,7 @@ from backend.proxy import (
 # 前端目录: 项目根目录下的 frontend/
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 _update_quit_handler: Optional[Callable[[], None]] = None
+_app_activation_handler: Optional[Callable[[], bool]] = None
 
 
 def _popen_hidden(command: list[str], *, detached: bool = False):
@@ -67,9 +68,25 @@ def register_update_quit_handler(handler: Optional[Callable[[], None]]):
     _update_quit_handler = handler
 
 
+def register_app_activation_handler(handler: Optional[Callable[[], bool]]):
+    """注册第二次启动时唤起已有窗口的回调。"""
+    global _app_activation_handler
+    _app_activation_handler = handler
+
+
 def _get_update_quit_handler() -> Optional[Callable[[], None]]:
     handler = _update_quit_handler
     return handler if callable(handler) else None
+
+
+def _activate_existing_app() -> bool:
+    handler = _app_activation_handler
+    if not callable(handler):
+        return False
+    try:
+        return bool(handler())
+    except Exception:
+        return False
 
 
 def _schedule_update_quit_for_install(handler: Callable[[], None], delay: float = 0.8) -> bool:
@@ -130,39 +147,94 @@ def _parse_inference_models(raw_value: str) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
+def _inference_model_names(items: list) -> list[str]:
+    """提取 Desktop inferenceModels 里的模型名称。"""
+    names = []
+    for item in items:
+        if isinstance(item, dict):
+            value = item.get("name")
+        else:
+            value = item
+        name = str(value or "").strip()
+        if name:
+            names.append(name)
+    return names
+
+
+def _raw_desktop_model_names(names: list[str], provider: Optional[dict], providers: Optional[list[dict]]) -> list[str]:
+    """识别旧版本写入的真实上游模型名。"""
+    suspicious_tokens = (
+        "deepseek",
+        "kimi",
+        "moonshot",
+        "glm",
+        "qwen",
+        "dashscope",
+        "aliyun",
+        "siliconflow",
+        "mimo",
+    )
+    upstream_ids = set(provider_model_ids(provider))
+    for item in providers or []:
+        upstream_ids.update(provider_model_ids(item))
+
+    raw_names = []
+    for name in names:
+        lowered = name.lower()
+        if name in upstream_ids or any(token in lowered for token in suspicious_tokens):
+            raw_names.append(name)
+    return raw_names
+
+
+def _stale_desktop_route_names(names: list[str], target_models: list) -> list[str]:
+    """识别旧配置里残留的未映射 Claude-safe route。"""
+    allowed = {
+        str(item.get("name"))
+        for item in target_models
+        if isinstance(item, dict) and item.get("name")
+    }
+    known_routes = set(desktop_route_ids())
+    return [
+        name
+        for name in names
+        if name in known_routes and name not in allowed
+    ]
+
+
+def _no_desktop_model_routes_response(target: dict, proxy_port: int, *, attempted: bool = False) -> dict:
+    """生成没有显式模型映射时的失败响应。"""
+    response = {
+        "success": False,
+        "message": "请至少映射一个 Claude 模型槽位后再应用到 Claude 桌面版。",
+        "mode": target["mode"],
+        "requiresProxy": target["requiresProxy"],
+        "proxyStarted": False,
+        "proxyPort": proxy_port,
+        "configSuccess": False,
+    }
+    if attempted:
+        response["attempted"] = True
+    return response
+
+
 def desktop_config_target_for_provider(provider: Optional[dict], settings: Optional[dict] = None) -> dict:
     """生成 Claude Desktop 写入目标。
 
-    Anthropic 兼容 provider 直接写真实地址和真实 Key；OpenAI Chat 等需要转换
-    的实验接口才保留本地转发模式。
+    v1.0.18 起默认写入本机转发地址。这样所有第三方 provider 都走同一条
+    代理链，模型映射、额外请求头和协议转换逻辑统一由后台处理。
     """
     settings = settings or cfg.get_settings()
-    api_format = normalize_api_format((provider or {}).get("apiFormat", "anthropic"))
-    requires_proxy = api_format != "anthropic" or not provider
-    if requires_proxy:
-        proxy_port = settings.get("proxyPort", 18080)
-        return {
-            "baseUrl": f"http://127.0.0.1:{proxy_port}",
-            "apiKey": cfg.get_or_create_gateway_api_key(),
-            "authScheme": "bearer",
-            "gatewayHeaders": "",
-            "provider": provider,
-            "providers": None,
-            "exposeAll": False,
-            "requiresProxy": True,
-            "mode": "local_proxy",
-        }
-    api_key = provider.get("apiKey") or ""
+    proxy_port = settings.get("proxyPort", 18080)
     return {
-        "baseUrl": str(provider.get("baseUrl") or "").rstrip("/"),
-        "apiKey": api_key,
-        "authScheme": provider.get("authScheme") or "bearer",
-        "gatewayHeaders": registry.serialize_gateway_headers(provider.get("extraHeaders"), api_key),
+        "baseUrl": f"http://127.0.0.1:{proxy_port}",
+        "apiKey": cfg.get_or_create_gateway_api_key(),
+        "authScheme": "bearer",
+        "gatewayHeaders": "",
         "provider": provider,
         "providers": None,
         "exposeAll": False,
-        "requiresProxy": False,
-        "mode": "direct_provider",
+        "requiresProxy": True,
+        "mode": "local_proxy",
     }
 
 
@@ -201,9 +273,22 @@ def _desktop_health(
             })
 
     inference_models = _parse_inference_models(str(keys.get("inferenceModels") or ""))
-    target_models = (
-        registry.provider_inference_models(provider)
-    )
+    inference_model_names = _inference_model_names(inference_models)
+    raw_model_names = _raw_desktop_model_names(inference_model_names, provider, providers)
+    if raw_model_names:
+        issues.append({
+            "code": "invalid_inference_model_names",
+            "message": "Claude 桌面版配置里仍有第三方真实模型名，请重新一键应用到 Claude 桌面版。",
+            "models": raw_model_names,
+        })
+    target_models = registry.provider_inference_models(provider)
+    stale_route_names = _stale_desktop_route_names(inference_model_names, target_models)
+    if stale_route_names:
+        issues.append({
+            "code": "stale_inference_model_routes",
+            "message": "Claude 桌面版配置里仍有未映射模型入口，请重新一键应用并重启 Claude 桌面版。",
+            "models": stale_route_names,
+        })
     one_million_models = [
         str(item.get("name"))
         for item in target_models
@@ -246,6 +331,9 @@ def _sync_desktop_for_active_provider() -> dict:
 
     settings = cfg.get_settings()
     target = desktop_config_target_for_provider(provider, settings)
+    proxy_port = int(settings.get("proxyPort", 18080))
+    if not registry.provider_inference_models(provider):
+        return _no_desktop_model_routes_response(target, proxy_port, attempted=True)
     result = registry.apply_config(
         target["baseUrl"],
         gateway_api_key=target["apiKey"],
@@ -255,12 +343,27 @@ def _sync_desktop_for_active_provider() -> dict:
         auth_scheme=target["authScheme"],
         gateway_headers=target["gatewayHeaders"],
     )
-    return {
+    response = {
         "attempted": True,
         "mode": target["mode"],
         "requiresProxy": target["requiresProxy"],
+        "configSuccess": bool(result.get("success")),
+        "proxyStarted": False,
+        "proxyPort": proxy_port,
         **result,
     }
+    if result.get("success") and target["requiresProxy"]:
+        proxy_started = _start_proxy_server(proxy_port)
+        response["proxyStarted"] = bool(proxy_started)
+        if not proxy_started:
+            response["success"] = False
+            response["message"] = (
+                "桌面版配置已写入，但本机转发服务启动失败。"
+                "请检查转发端口是否被占用，或在设置中更换转发端口后重试。"
+            )
+    elif result.get("success"):
+        response["proxyStarted"] = bool(_proxy_running)
+    return response
 
 
 def _provider_test_model(provider: dict) -> str:
@@ -447,7 +550,7 @@ async def _detect_local_proxy() -> Optional[str]:
 
 def create_admin_app() -> FastAPI:
     """创建管理后台 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.17")
+    app = FastAPI(title="CC Desktop Switch Admin", version="1.0.19")
 
     @app.middleware("http")
     async def require_app_header_for_writes(request: Request, call_next):
@@ -497,6 +600,12 @@ def create_admin_app() -> FastAPI:
             "desktopHealth": _desktop_health(desktop_status, proxy_port, active, providers, expose_all),
             "exposeAllProviderModels": expose_all,
         }
+
+    @app.post("/api/app/activate")
+    async def activate_app():
+        """第二次启动时由新进程调用，用于把已有窗口带回前台。"""
+        handled = _activate_existing_app()
+        return {"success": True, "handled": handled}
 
     # ── 提供商 API ──
     @app.get("/api/providers")
@@ -816,6 +925,9 @@ def create_admin_app() -> FastAPI:
             settings = dict(settings)
             settings["proxyPort"] = int(data["port"])
         target = desktop_config_target_for_provider(active_provider, settings)
+        proxy_port = int(settings.get("proxyPort", 18080))
+        if not registry.provider_inference_models(active_provider):
+            return _no_desktop_model_routes_response(target, proxy_port)
         result = registry.apply_config(
             target["baseUrl"],
             gateway_api_key=target["apiKey"],
@@ -825,7 +937,26 @@ def create_admin_app() -> FastAPI:
             auth_scheme=target["authScheme"],
             gateway_headers=target["gatewayHeaders"],
         )
-        return {**result, "mode": target["mode"], "requiresProxy": target["requiresProxy"]}
+        response = {
+            **result,
+            "configSuccess": bool(result.get("success")),
+            "mode": target["mode"],
+            "requiresProxy": target["requiresProxy"],
+            "proxyStarted": False,
+            "proxyPort": proxy_port,
+        }
+        if result.get("success") and target["requiresProxy"]:
+            proxy_started = _start_proxy_server(proxy_port)
+            response["proxyStarted"] = bool(proxy_started)
+            if not proxy_started:
+                response["success"] = False
+                response["message"] = (
+                    "桌面版配置已写入，但本机转发服务启动失败。"
+                    "请检查转发端口是否被占用，或在设置中更换转发端口后重试。"
+                )
+        elif result.get("success"):
+            response["proxyStarted"] = bool(_proxy_running)
+        return response
 
     @app.post("/api/desktop/clear")
     async def clear_desktop_config():
@@ -838,7 +969,7 @@ def create_admin_app() -> FastAPI:
         """获取代理状态"""
         return {
             "running": _proxy_running,
-            "port": cfg.get_settings().get("proxyPort", 18080),
+            "port": _proxy_port or cfg.get_settings().get("proxyPort", 18080),
             "stats": proxy_stats.to_dict(),
         }
 
@@ -852,12 +983,12 @@ def create_admin_app() -> FastAPI:
             cfg.update_settings({"proxyPort": int(requested_port)})
 
         if _proxy_running:
-            return {"success": True, "message": "代理已在运行中"}
+            return {"success": True, "message": "代理已在运行中", "port": _proxy_port or cfg.get_settings().get("proxyPort", 18080)}
 
         port = cfg.get_settings().get("proxyPort", 18080)
         success = _start_proxy_server(port)
         if success:
-            return {"success": True, "message": f"代理已启动，端口: {port}"}
+            return {"success": True, "message": f"代理已启动，端口: {port}", "port": port}
         return JSONResponse(
             status_code=500,
             content={"success": False, "message": "代理启动失败"},
@@ -996,41 +1127,79 @@ def create_admin_app() -> FastAPI:
 _proxy_running = False
 _proxy_thread: Optional[threading.Thread] = None
 _proxy_server = None
+_proxy_port: Optional[int] = None
+
+
+def _wait_for_proxy_server_start(server, thread: threading.Thread, port: int, timeout: float = 2.0) -> bool:
+    """等待 uvicorn 完成监听，避免端口冲突时误报启动成功。"""
+    deadline = time.perf_counter() + timeout
+    has_started_flag = hasattr(server, "started")
+    while time.perf_counter() < deadline:
+        if has_started_flag and getattr(server, "started", False):
+            return True
+        if not thread.is_alive():
+            return False
+        if not has_started_flag:
+            try:
+                with socket.create_connection(("127.0.0.1", int(port)), timeout=0.1):
+                    return True
+            except OSError:
+                pass
+        time.sleep(0.05)
+    if has_started_flag:
+        return bool(getattr(server, "started", False))
+    return bool(thread.is_alive())
 
 
 def _start_proxy_server(port: int) -> bool:
     """在新线程中启动代理服务器"""
-    global _proxy_running, _proxy_thread, _proxy_server
+    global _proxy_running, _proxy_thread, _proxy_server, _proxy_port
 
+    requested_port = int(port)
     if _proxy_running:
-        return True
+        if _proxy_port == requested_port:
+            return True
+        _stop_proxy_server()
+        if _proxy_thread and _proxy_thread.is_alive():
+            _proxy_thread.join(timeout=1.0)
 
     proxy_app = create_proxy_app()
 
     config = uvicorn.Config(
         proxy_app,
         host="127.0.0.1",
-        port=port,
+        port=requested_port,
         log_level="warning",
         access_log=False,
         log_config=None,
     )
-    _proxy_server = uvicorn.Server(config)
+    server = uvicorn.Server(config)
+    _proxy_server = server
 
     def run():
-        global _proxy_running
-        _proxy_running = True
-        _proxy_server.run()
-        _proxy_running = False
+        global _proxy_running, _proxy_port
+        try:
+            server.run()
+        finally:
+            if _proxy_server is server:
+                _proxy_running = False
+                _proxy_port = None
 
     _proxy_thread = threading.Thread(target=run, daemon=True)
     _proxy_thread.start()
-    return True
+    _proxy_running = _wait_for_proxy_server_start(server, _proxy_thread, requested_port)
+    if not _proxy_running:
+        server.should_exit = True
+        _proxy_port = None
+    else:
+        _proxy_port = requested_port
+    return _proxy_running
 
 
 def _stop_proxy_server():
     """停止代理服务器"""
-    global _proxy_running, _proxy_server
+    global _proxy_running, _proxy_server, _proxy_port
     if _proxy_server:
         _proxy_server.should_exit = True
     _proxy_running = False
+    _proxy_port = None

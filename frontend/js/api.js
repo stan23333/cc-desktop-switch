@@ -17,6 +17,20 @@
     return data;
   }
 
+  async function apiResult(method, path, body) {
+    const opts = { method, headers: { 'X-CCDS-Request': '1' } };
+    if (body !== undefined) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = JSON.stringify(body);
+    }
+    const resp = await fetch(BASE + path, opts);
+    const data = await resp.json();
+    if (!resp.ok) {
+      throw new Error(data.message || `Request failed: ${method} ${path}`);
+    }
+    return data;
+  }
+
   // ── 工具 ──
   const ICON_MAP = {
     deepseek: { logo: 'assets/providers/deepseek.ico' },
@@ -213,14 +227,13 @@
           inferenceGatewayBaseUrl: registryConfig.inferenceGatewayBaseUrl || `http://127.0.0.1:${proxyPort}`,
           inferenceGatewayApiKey: registryConfig.inferenceGatewayApiKey ? '******' : '',
           inferenceGatewayAuthScheme: registryConfig.inferenceGatewayAuthScheme || 'bearer',
-          inferenceModels: registryConfig.inferenceModels || '["sonnet","haiku","opus"]',
+          inferenceModels: registryConfig.inferenceModels || '[]',
         },
       };
     },
 
     async configureDesktop() {
-      await api('POST', '/api/desktop/configure');
-      return this.getDesktopStatus();
+      return apiResult('POST', '/api/desktop/configure');
     },
 
     async clearDesktop() {

@@ -8,7 +8,7 @@ import sys
 import tempfile
 from typing import Optional
 
-from backend.model_alias import all_provider_model_entries, provider_model_entries
+from backend.model_alias import all_provider_model_entries, desktop_model_entries
 
 REGISTRY_PATH = r"SOFTWARE\Policies\Claude"
 CCDS_MARKER = "ccds_managed"
@@ -19,7 +19,7 @@ DESKTOP_CONFIG = {
     "inferenceGatewayApiKey": ("", str),
     "inferenceGatewayAuthScheme": ("bearer", str),
     "inferenceGatewayHeaders": ("[]", str),
-    "inferenceModels": ('["sonnet","haiku","opus"]', str),
+    "inferenceModels": ("[]", str),
     "inferenceGatewayBaseUrl": ("http://127.0.0.1:18080", str),
     "isClaudeCodeForDesktopEnabled": (1, int),
 }
@@ -90,21 +90,19 @@ def _not_supported() -> dict:
 def provider_inference_models(provider: Optional[dict]) -> list:
     """生成 Claude Desktop gateway 需要的模型列表。
 
-    Claude Desktop 的 1M 上下文不是只看请求里的 model 字段，还会读取
-    managed policy 的 inferenceModels。DeepSeek 的 1M 模型需要显式标注
-    supports1m，且 name 要和 gateway /v1/models 返回的 ID 完全一致。
+    Claude Desktop 只看到 Claude-safe route 名称；真实上游模型 ID 只保留
+    在代理内部映射里。1M 上下文仍需要在对应 route 上显式标注 supports1m。
     """
-    fallback = ["sonnet", "haiku", "opus"]
     if not provider:
-        return fallback
-    result = _desktop_model_items(provider_model_entries(provider, use_alias=False))
-    return result or fallback
+        return []
+    result = _desktop_model_items(desktop_model_entries(provider, use_alias=False))
+    return result
 
 
 def all_provider_inference_models(providers: list[dict]) -> list:
     """生成所有 provider 的 Claude Desktop 模型列表。"""
     result = _desktop_model_items(all_provider_model_entries(providers))
-    return result or ["sonnet", "haiku", "opus"]
+    return result
 
 
 def serialize_inference_models(

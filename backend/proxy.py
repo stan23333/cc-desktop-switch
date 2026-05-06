@@ -19,6 +19,8 @@ from backend.api_adapters import (
 )
 from backend.model_alias import (
     all_provider_model_entries,
+    desktop_model_entries,
+    desktop_route_ids,
     model_mappings_with_legacy_aliases,
     provider_model_ids as alias_provider_model_ids,
     resolve_model_alias,
@@ -26,7 +28,7 @@ from backend.model_alias import (
 )
 
 def provider_model_ids(provider: Optional[dict]) -> list:
-    """返回当前 provider 暴露给 Claude Desktop 的真实模型 ID。"""
+    """返回当前 provider 配置里的真实上游模型 ID。"""
     return alias_provider_model_ids(provider)
 
 
@@ -39,10 +41,7 @@ def gateway_models_response(
     if expose_all:
         entries = all_provider_model_entries(providers or [])
     else:
-        entries = [
-            {"name": model_id, "displayName": model_id}
-            for model_id in provider_model_ids(provider)
-        ]
+        entries = desktop_model_entries(provider)
     data = []
     for item in entries:
         model_id = item["name"]
@@ -60,6 +59,38 @@ def gateway_models_response(
         "has_more": False,
         "first_id": data[0]["id"] if data else None,
         "last_id": data[-1]["id"] if data else None,
+    }
+
+
+def _configured_desktop_route_names(provider: Optional[dict]) -> set[str]:
+    return {
+        str(item.get("name"))
+        for item in desktop_model_entries(provider)
+        if item.get("name")
+    }
+
+
+def _is_unmapped_desktop_route(model_id: str, provider: Optional[dict]) -> bool:
+    """判断请求是否命中了 Claude-safe 但未显式映射的 route。"""
+    requested = str(model_id or "").strip()
+    if not requested:
+        return False
+    if requested in provider_model_ids(provider):
+        return False
+    if requested not in set(desktop_route_ids()) and not resolve_requested_model_slot(requested):
+        return False
+    return requested not in _configured_desktop_route_names(provider)
+
+
+def unmapped_desktop_route_error(model_id: str) -> dict:
+    return {
+        "error": {
+            "type": "invalid_request_error",
+            "message": (
+                f"模型 {model_id} 未在 CC Desktop Switch 中映射，"
+                "请在 Claude Desktop 里选择已映射模型，或重新一键应用配置。"
+            ),
+        }
     }
 
 
@@ -138,7 +169,7 @@ def map_model(original_model: str, provider: Optional[dict]) -> str:
 
     mapped_slot = resolve_requested_model_slot(original_model)
     if mapped_slot:
-        return models_config.get(mapped_slot) or models_config.get("default") or original_model
+        return models_config.get(mapped_slot) or original_model
 
     return models_config.get("default") or original_model
 
@@ -606,7 +637,7 @@ def _get_http_proxy() -> Optional[str]:
 
 def create_proxy_app() -> FastAPI:
     """创建代理 FastAPI 应用"""
-    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.17")
+    app = FastAPI(title="CC Desktop Switch Proxy", version="1.0.19")
 
     def upstream_error_status(result: dict) -> int:
         """把上游错误转换成 HTTP 错误状态，避免桌面端按成功响应解析。"""
@@ -698,7 +729,14 @@ def create_proxy_app() -> FastAPI:
 
         # 模型名翻译
         original_model = body.get("model", "")
-        mapped_model = alias_model if alias_hit else map_model(original_model, provider)
+        route_model = alias_model if alias_hit else original_model
+        if _is_unmapped_desktop_route(route_model, provider):
+            log_buffer.add("ERROR", f"未映射模型: {route_model}")
+            return JSONResponse(
+                status_code=400,
+                content=unmapped_desktop_route_error(route_model),
+            )
+        mapped_model = map_model(route_model, provider)
         body["model"] = mapped_model
 
         log_buffer.add("INFO", f"请求: POST /v1/messages")

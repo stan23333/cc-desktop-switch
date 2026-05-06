@@ -10,13 +10,25 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.main import _desktop_health, _test_provider_connection, create_admin_app, desktop_config_target_for_provider
-from main import DesktopTrayController
+from backend.main import (
+    _desktop_health,
+    _test_provider_connection,
+    create_admin_app,
+    desktop_config_target_for_provider,
+    register_app_activation_handler,
+)
+from main import (
+    DesktopTrayController,
+    acquire_single_instance_lock,
+    release_single_instance_lock,
+    request_existing_instance_activate,
+)
 from backend import config as cfg
 from backend import ccswitch_import
 from backend import provider_tools
 from backend import registry
 from backend import update as updater
+from backend.model_alias import provider_model_ids as raw_provider_model_ids
 from backend.proxy import (
     _anthropic_to_openai_body,
     _normalize_anthropic_response,
@@ -201,11 +213,23 @@ class ProviderConfigTests(unittest.TestCase):
 
         models = registry.provider_inference_models(provider)
         serialized = registry.serialize_inference_models(provider)
+        by_name = {item["name"]: item for item in models}
 
-        self.assertEqual(models[0]["name"], "deepseek-v4-pro[1m]")
-        self.assertTrue(models[0]["supports1m"])
-        self.assertEqual(models[1]["name"], "deepseek-v4-flash")
-        self.assertTrue(models[1]["supports1m"])
+        self.assertEqual(set(by_name), {
+            "claude-opus-4-7",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+        })
+        self.assertIn("claude-sonnet-4-6", by_name)
+        self.assertIn("claude-haiku-4-5", by_name)
+        self.assertNotIn("deepseek-v4-pro[1m]", by_name)
+        self.assertNotIn("deepseek-v4-flash", by_name)
+        self.assertNotIn("claude-opus-4-6", by_name)
+        self.assertNotIn("claude-3-opus", by_name)
+        self.assertNotIn("claude-sonnet-4-5", by_name)
+        self.assertTrue(by_name["claude-opus-4-7"]["supports1m"])
+        self.assertTrue(by_name["claude-sonnet-4-6"]["supports1m"])
+        self.assertTrue(by_name["claude-haiku-4-5"]["supports1m"])
         self.assertIn('"supports1m":true', serialized)
 
     def test_registry_inference_models_mark_capability_based_1m_models(self):
@@ -225,11 +249,16 @@ class ProviderConfigTests(unittest.TestCase):
         models = registry.provider_inference_models(provider)
         by_name = {item["name"]: item for item in models}
 
-        self.assertTrue(by_name["qwen3.6-plus"]["supports1m"])
-        self.assertTrue(by_name["qwen3.6-flash"]["supports1m"])
-        self.assertNotIn("supports1m", by_name["qwen3.6-max-preview"])
+        self.assertTrue(by_name["claude-sonnet-4-6"]["supports1m"])
+        self.assertTrue(by_name["claude-haiku-4-5"]["supports1m"])
+        self.assertNotIn("supports1m", by_name["claude-opus-4-7"])
+        self.assertNotIn("claude-opus-4-6", by_name)
+        self.assertNotIn("claude-3-opus", by_name)
+        self.assertNotIn("claude-sonnet-4-5", by_name)
+        self.assertNotIn("qwen3.6-plus", by_name)
+        self.assertNotIn("qwen3.6-flash", by_name)
 
-    def test_desktop_config_target_serializes_extra_headers_for_direct_provider(self):
+    def test_desktop_config_target_uses_local_proxy_for_anthropic_provider(self):
         provider = {
             "name": "Custom Anthropic",
             "baseUrl": "https://api.example.com/anthropic/",
@@ -241,12 +270,14 @@ class ProviderConfigTests(unittest.TestCase):
 
         target = desktop_config_target_for_provider(provider, {"proxyPort": 18080})
 
-        self.assertEqual(target["mode"], "direct_provider")
-        self.assertFalse(target["requiresProxy"])
-        self.assertEqual(target["baseUrl"], "https://api.example.com/anthropic")
-        self.assertEqual(target["apiKey"], "provider-key")
-        self.assertEqual(target["authScheme"], "x-api-key")
-        self.assertEqual(json.loads(target["gatewayHeaders"]), ["x-api-key: provider-key"])
+        self.assertEqual(target["mode"], "local_proxy")
+        self.assertTrue(target["requiresProxy"])
+        self.assertEqual(target["baseUrl"], "http://127.0.0.1:18080")
+        self.assertTrue(target["apiKey"].startswith("ccds_"))
+        self.assertNotEqual(target["apiKey"], "provider-key")
+        self.assertEqual(target["authScheme"], "bearer")
+        self.assertEqual(target["gatewayHeaders"], "")
+        self.assertEqual(target["provider"], provider)
 
     def test_all_provider_inference_models_use_provider_aliases_and_keep_1m(self):
         providers = [
@@ -276,14 +307,15 @@ class ProviderConfigTests(unittest.TestCase):
 
         self.assertIn(
             {
-                "name": "deepseek/deepseek-v4-pro[1m]",
-                "displayName": "DeepSeek / deepseek-v4-pro[1m]",
+                "name": "deepseek/claude-sonnet-4-6",
+                "displayName": "DeepSeek / claude-sonnet-4-6",
                 "supports1m": True,
             },
             models,
         )
-        self.assertIn({"name": "kimi/kimi-k2.6", "displayName": "Kimi / kimi-k2.6"}, models)
+        self.assertIn({"name": "kimi/claude-sonnet-4-6", "displayName": "Kimi / claude-sonnet-4-6"}, models)
         self.assertNotIn({"name": "deepseek-v4-pro[1m]", "displayName": "deepseek-v4-pro[1m]"}, models)
+        self.assertFalse(any(item.get("name") == "deepseek/claude-opus-4-6" for item in models))
 
     def test_windows_registry_apply_falls_back_to_elevated_helper_when_key_is_not_writable(self):
         if not hasattr(registry, "_win_apply_config"):
@@ -683,18 +715,14 @@ class ProviderConfigTests(unittest.TestCase):
         cleared = cfg.update_provider(provider["id"], {"requestOptions": {}})
         self.assertEqual(cleared["requestOptions"], {})
 
-    def test_all_builtin_presets_expose_and_map_provider_models(self):
-        """所有内置预设都应能被 Claude Desktop 读取，并被代理实际使用。"""
+    def test_all_builtin_presets_expose_only_explicit_provider_models(self):
+        """内置预设只把显式映射的 Claude route 暴露给 Claude Desktop。"""
         for preset in cfg.get_presets():
             with self.subTest(provider=preset["id"]):
                 if preset["id"] == "third-party":
                     continue
                 models = preset["models"]
-                expected_ids = []
-                for key in ("default", "sonnet", "opus", "haiku"):
-                    model_id = models.get(key)
-                    if model_id and model_id not in expected_ids:
-                        expected_ids.append(model_id)
+                upstream_ids = raw_provider_model_ids(preset)
 
                 desktop_models = registry.provider_inference_models(preset)
                 desktop_ids = [
@@ -703,13 +731,22 @@ class ProviderConfigTests(unittest.TestCase):
                 ]
                 gateway_ids = [item["id"] for item in gateway_models_response(preset)["data"]]
 
-                self.assertEqual(desktop_ids, expected_ids)
-                self.assertEqual(gateway_ids, expected_ids)
-                for model_id in expected_ids:
+                self.assertEqual(gateway_ids, desktop_ids)
+                for model_id in upstream_ids:
                     self.assertEqual(map_model(model_id, preset), model_id)
-                self.assertEqual(map_model("claude-sonnet-4-6", preset), models["sonnet"])
-                self.assertEqual(map_model("claude-haiku-3-5", preset), models["haiku"])
-                self.assertEqual(map_model("claude-opus-4-7", preset), models["opus"])
+                    self.assertNotIn(model_id, desktop_ids)
+                    self.assertNotIn(model_id, gateway_ids)
+                if not desktop_ids:
+                    self.assertEqual(map_model("claude-sonnet-4-6", preset), "claude-sonnet-4-6")
+                    continue
+                for route_id in desktop_ids:
+                    self.assertIn(map_model(route_id, preset), upstream_ids)
+                if "claude-sonnet-4-6" in desktop_ids:
+                    self.assertEqual(map_model("claude-sonnet-4-6", preset), models["sonnet"])
+                if "claude-haiku-4-5" in desktop_ids:
+                    self.assertEqual(map_model("claude-haiku-4-5", preset), models["haiku"])
+                if "claude-opus-4-7" in desktop_ids:
+                    self.assertEqual(map_model("claude-opus-4-7", preset), models["opus"])
 
         deepseek_1m = cfg.get_presets()[0]["modelOptions"]["deepseek_1m"]
         deepseek_1m_provider = {
@@ -718,13 +755,22 @@ class ProviderConfigTests(unittest.TestCase):
         }
         desktop_models = registry.provider_inference_models(deepseek_1m_provider)
         self.assertTrue(any(
-            item["name"] == "deepseek-v4-pro[1m]" and item.get("supports1m") is True
+            item["name"] == "claude-sonnet-4-6" and item.get("supports1m") is True
+            for item in desktop_models
+            if isinstance(item, dict)
+        ))
+        self.assertFalse(any(
+            item["name"] == "deepseek-v4-pro[1m]"
             for item in desktop_models
             if isinstance(item, dict)
         ))
         self.assertEqual(
             map_model("claude-sonnet-4-6", deepseek_1m_provider),
             "deepseek-v4-pro[1m]",
+        )
+        self.assertEqual(
+            map_model("claude-haiku-4-5", deepseek_1m_provider),
+            "deepseek-v4-flash",
         )
 
     def test_settings_fall_back_to_default_update_url(self):
@@ -835,7 +881,7 @@ class ProviderConfigTests(unittest.TestCase):
         old_status = {
             "configured": False,
             "keys": {
-                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceGatewayBaseUrl": "https://api.deepseek.com/anthropic",
                 "inferenceModels": '["sonnet","haiku","opus"]',
             },
         }
@@ -847,11 +893,37 @@ class ProviderConfigTests(unittest.TestCase):
         self.assertIn("gateway_base_url_mismatch", codes)
         self.assertIn("one_million_not_written", codes)
 
+        raw_status = {
+            "configured": True,
+            "keys": {
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceModels": '[{"name":"deepseek-v4-pro[1m]","supports1m":true},{"name":"deepseek-v4-flash","supports1m":true}]',
+            },
+        }
+        raw_health = _desktop_health(raw_status, 18080, provider)
+        raw_codes = {issue["code"] for issue in raw_health["issues"]}
+
+        self.assertTrue(raw_health["needsApply"])
+        self.assertIn("invalid_inference_model_names", raw_codes)
+
+        stale_status = {
+            "configured": True,
+            "keys": {
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceModels": '[{"name":"claude-opus-4-7","supports1m":true},{"name":"claude-opus-4-6","supports1m":true},{"name":"claude-sonnet-4-6","supports1m":true},{"name":"claude-sonnet-4-5","supports1m":true},{"name":"claude-haiku-4-5","supports1m":true}]',
+            },
+        }
+        stale_health = _desktop_health(stale_status, 18080, provider)
+        stale_codes = {issue["code"] for issue in stale_health["issues"]}
+
+        self.assertTrue(stale_health["needsApply"])
+        self.assertIn("stale_inference_model_routes", stale_codes)
+
         current_status = {
             "configured": True,
             "keys": {
-                "inferenceGatewayBaseUrl": "https://api.deepseek.com/anthropic",
-                "inferenceModels": '[{"name":"deepseek-v4-pro[1m]","supports1m":true},{"name":"deepseek-v4-flash","supports1m":true}]',
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceModels": registry.serialize_inference_models(provider),
             },
         }
 
@@ -880,16 +952,16 @@ class ProviderConfigTests(unittest.TestCase):
         missing = _desktop_health({
             "configured": True,
             "keys": {
-                "inferenceGatewayBaseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
-                "inferenceModels": '[{"name":"qwen3.6-plus"},{"name":"qwen3.6-flash"}]',
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceModels": '[{"name":"claude-sonnet-4-6"},{"name":"claude-haiku-4-5"}]',
             },
         }, 18080, provider)
 
         ready = _desktop_health({
             "configured": True,
             "keys": {
-                "inferenceGatewayBaseUrl": "https://dashscope.aliyuncs.com/apps/anthropic",
-                "inferenceModels": '[{"name":"qwen3.6-plus","supports1m":true},{"name":"qwen3.6-flash","supports1m":true}]',
+                "inferenceGatewayBaseUrl": "http://127.0.0.1:18080",
+                "inferenceModels": registry.serialize_inference_models(provider),
             },
         }, 18080, provider)
 
@@ -1186,10 +1258,31 @@ class AdminApiTests(unittest.TestCase):
         self.client = TestClient(create_admin_app())
 
     def tearDown(self):
+        register_app_activation_handler(None)
         cfg.CONFIG_DIR = self.old_config_dir
         cfg.CONFIG_FILE = self.old_config_file
         cfg.BACKUP_DIR = self.old_backup_dir
         self.temp_dir.cleanup()
+
+    def test_activate_app_requires_local_header_and_invokes_handler(self):
+        calls = []
+
+        def handler():
+            calls.append("activated")
+            return True
+
+        register_app_activation_handler(handler)
+
+        blocked = self.client.post("/api/app/activate")
+        allowed = self.client.post(
+            "/api/app/activate",
+            headers={"x-ccds-request": "1"},
+        )
+
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(allowed.json(), {"success": True, "handled": True})
+        self.assertEqual(calls, ["activated"])
 
     def test_config_export_requires_local_header_and_keeps_provider_list_public(self):
         cfg.add_provider({
@@ -1493,7 +1586,7 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(observed["platform"], "macos-arm64")
 
-    def test_set_default_provider_syncs_desktop_models_to_direct_provider_policy(self):
+    def test_set_default_provider_syncs_desktop_models_to_local_proxy_policy(self):
         first = cfg.add_provider({
             "name": "DeepSeek",
             "baseUrl": "https://api.deepseek.com/anthropic",
@@ -1510,17 +1603,20 @@ class AdminApiTests(unittest.TestCase):
         self.assertEqual(cfg.load_config()["activeProvider"], first["id"])
 
         with patch("backend.main.registry.apply_config", return_value={"success": True}) as apply_config:
-            response = self.client.put(
-                f"/api/providers/{second['id']}/default",
-                headers={"x-ccds-request": "1"},
-            )
+            with patch("backend.main._start_proxy_server", return_value=True) as start_proxy:
+                response = self.client.put(
+                    f"/api/providers/{second['id']}/default",
+                    headers={"x-ccds-request": "1"},
+                )
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data["desktopSync"]["attempted"])
         self.assertTrue(data["desktopSync"]["success"])
-        self.assertEqual(apply_config.call_args.args[0], "https://api.moonshot.cn/anthropic")
-        self.assertEqual(apply_config.call_args.kwargs["gateway_api_key"], "")
+        self.assertTrue(data["desktopSync"]["proxyStarted"])
+        start_proxy.assert_called_once_with(18080)
+        self.assertEqual(apply_config.call_args.args[0], "http://127.0.0.1:18080")
+        self.assertTrue(apply_config.call_args.kwargs["gateway_api_key"].startswith("ccds_"))
         self.assertEqual(apply_config.call_args.kwargs["auth_scheme"], "bearer")
         self.assertEqual(apply_config.call_args.kwargs["gateway_headers"], "")
         self.assertFalse(apply_config.call_args.kwargs["expose_all"])
@@ -1548,16 +1644,68 @@ class AdminApiTests(unittest.TestCase):
         cfg.update_settings({"exposeAllProviderModels": True})
 
         with patch("backend.main.registry.apply_config", return_value={"success": True}) as apply_config:
-            response = self.client.put(
-                f"/api/providers/{second['id']}/default",
-                headers={"x-ccds-request": "1"},
-            )
+            with patch("backend.main._start_proxy_server", return_value=True):
+                response = self.client.put(
+                    f"/api/providers/{second['id']}/default",
+                    headers={"x-ccds-request": "1"},
+                )
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["desktopSync"]["attempted"])
         self.assertFalse(apply_config.call_args.kwargs["expose_all"])
         self.assertIsNone(apply_config.call_args.kwargs["providers"])
         self.assertEqual(apply_config.call_args.kwargs["provider"]["id"], second["id"])
+
+    def test_configure_desktop_fails_when_proxy_start_fails(self):
+        cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "deepseek-v4-pro", "default": "deepseek-v4-pro"},
+        })
+
+        with patch("backend.main.registry.apply_config", return_value={"success": True}) as apply_config:
+            with patch("backend.main._start_proxy_server", return_value=False) as start_proxy:
+                response = self.client.post(
+                    "/api/desktop/configure",
+                    headers={"x-ccds-request": "1"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertFalse(data["success"])
+        self.assertTrue(data["configSuccess"])
+        self.assertTrue(data["requiresProxy"])
+        self.assertFalse(data["proxyStarted"])
+        self.assertEqual(data["mode"], "local_proxy")
+        self.assertIn("本机转发服务启动失败", data["message"])
+        self.assertEqual(apply_config.call_args.args[0], "http://127.0.0.1:18080")
+        start_proxy.assert_called_once_with(18080)
+
+    def test_configure_desktop_fails_without_explicit_claude_model_routes(self):
+        cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"default": "deepseek-v4-pro"},
+        })
+
+        with patch("backend.main.registry.apply_config") as apply_config:
+            response = self.client.post(
+                "/api/desktop/configure",
+                headers={"x-ccds-request": "1"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertFalse(data["success"])
+        self.assertFalse(data["configSuccess"])
+        self.assertTrue(data["requiresProxy"])
+        self.assertEqual(data["mode"], "local_proxy")
+        self.assertIn("至少映射一个 Claude 模型槽位", data["message"])
+        apply_config.assert_not_called()
 
     def test_provider_compatibility_report_marks_openai_as_experimental(self):
         cfg.add_provider({
@@ -1700,6 +1848,94 @@ class AdminApiTests(unittest.TestCase):
         )
 
 
+class SingleInstanceStartupTests(unittest.TestCase):
+    class FakeKernel32:
+        def __init__(self, handle, last_error):
+            self.handle = handle
+            self.last_error = last_error
+            self.closed = []
+
+        def CreateMutexW(self, security_attributes, initial_owner, name):
+            self.requested_name = name
+            return self.handle
+
+        def GetLastError(self):
+            return self.last_error
+
+        def CloseHandle(self, handle):
+            self.closed.append(handle)
+            return True
+
+    class FakeWinDll:
+        def __init__(self, kernel32):
+            self.kernel32 = kernel32
+
+    class FakeActivationResponse:
+        status = 200
+
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return self.body
+
+    def test_windows_single_instance_lock_keeps_first_mutex_handle(self):
+        kernel32 = self.FakeKernel32(handle=123, last_error=0)
+
+        with patch("main.sys.platform", "win32"):
+            with patch("main.ctypes.windll", self.FakeWinDll(kernel32)):
+                with patch("main._single_instance_mutex", None):
+                    self.assertTrue(acquire_single_instance_lock())
+                    self.assertEqual(kernel32.requested_name, "Local\\CCDesktopSwitch.SingleInstance")
+                    self.assertEqual(kernel32.closed, [])
+                    release_single_instance_lock()
+
+        self.assertEqual(kernel32.closed, [123])
+
+    def test_windows_single_instance_lock_rejects_existing_instance(self):
+        kernel32 = self.FakeKernel32(handle=456, last_error=183)
+
+        with patch("main.sys.platform", "win32"):
+            with patch("main.ctypes.windll", self.FakeWinDll(kernel32)):
+                with patch("main._single_instance_mutex", None):
+                    self.assertFalse(acquire_single_instance_lock())
+
+        self.assertEqual(kernel32.closed, [456])
+
+    def test_request_existing_instance_activate_posts_local_header(self):
+        calls = []
+
+        def fake_urlopen(request, timeout):
+            calls.append((request, timeout))
+            return self.FakeActivationResponse(b'{"success": true, "handled": true}')
+
+        with patch("main.urlopen", fake_urlopen):
+            result = request_existing_instance_activate(18081, timeout=0)
+
+        self.assertTrue(result)
+        self.assertEqual(len(calls), 1)
+        request, timeout = calls[0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:18081/api/app/activate")
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(request.get_header("X-ccds-request"), "1")
+        self.assertGreater(timeout, 0)
+
+    def test_request_existing_instance_activate_requires_window_handler(self):
+        def fake_urlopen(request, timeout):
+            return self.FakeActivationResponse(b'{"success": true, "handled": false}')
+
+        with patch("main.urlopen", fake_urlopen):
+            result = request_existing_instance_activate(18081, timeout=0)
+
+        self.assertFalse(result)
+
+
 class ProxyConversionTests(unittest.TestCase):
     def test_build_upstream_url_accepts_base_url_or_full_endpoint(self):
         self.assertEqual(
@@ -1830,21 +2066,29 @@ class ProxyConversionTests(unittest.TestCase):
 
         self.assertEqual(map_model("deepseek-v4-pro[1m]", provider), "deepseek-v4-pro[1m]")
         self.assertEqual(map_model("claude-sonnet-4-6", provider), "deepseek-v4-pro[1m]")
+        self.assertEqual(map_model("claude-haiku-4-5", provider), "deepseek-v4-flash")
+        self.assertEqual(map_model("claude-sonnet-4-5", provider), "claude-sonnet-4-5")
 
-    def test_gateway_models_response_exposes_exact_provider_model_ids(self):
+    def test_gateway_models_response_exposes_safe_route_model_ids(self):
         provider = {
             "models": {
-                "sonnet": "deepseek-v4-pro[1m]",
+                "sonnet": "deepseek-v4-pro",
                 "haiku": "deepseek-v4-flash",
-                "opus": "deepseek-v4-pro[1m]",
-                "default": "deepseek-v4-pro[1m]",
+                "opus": "deepseek-v4-pro",
+                "default": "deepseek-v4-pro",
             }
         }
 
         response = gateway_models_response(provider)
+        ids = [item["id"] for item in response["data"]]
 
-        self.assertEqual(response["data"][0]["id"], "deepseek-v4-pro[1m]")
-        self.assertEqual(response["data"][1]["id"], "deepseek-v4-flash")
+        self.assertIn("claude-sonnet-4-6", ids)
+        self.assertIn("claude-haiku-4-5", ids)
+        self.assertNotIn("claude-opus-4-6", ids)
+        self.assertNotIn("claude-3-opus", ids)
+        self.assertNotIn("claude-sonnet-4-5", ids)
+        self.assertNotIn("deepseek-v4-pro", ids)
+        self.assertNotIn("deepseek-v4-flash", ids)
 
     def test_deepseek_request_options_force_max_effort_and_keep_thinking(self):
         provider = {
@@ -1974,7 +2218,9 @@ class ProxyAppTests(unittest.TestCase):
 
         self.assertEqual(blocked.status_code, 401)
         self.assertEqual(allowed.status_code, 200)
-        self.assertEqual(allowed.json()["data"][0]["id"], "deepseek-v4-pro[1m]")
+        ids = [item["id"] for item in allowed.json()["data"]]
+        self.assertIn("claude-sonnet-4-6", ids)
+        self.assertNotIn("deepseek-v4-pro[1m]", ids)
 
     def test_models_endpoint_keeps_active_models_when_all_models_setting_is_hidden(self):
         cfg.add_provider({
@@ -2009,7 +2255,8 @@ class ProxyAppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         by_id = {item["id"]: item for item in response.json()["data"]}
-        self.assertIn("deepseek-v4-pro[1m]", by_id)
+        self.assertIn("claude-sonnet-4-6", by_id)
+        self.assertNotIn("deepseek-v4-pro[1m]", by_id)
         self.assertNotIn("kimi/kimi-k2.6", by_id)
 
     def test_messages_endpoint_ignores_alias_routing_when_all_models_setting_is_hidden(self):
@@ -2080,6 +2327,35 @@ class ProxyAppTests(unittest.TestCase):
         })
 
         self.assertEqual(response.status_code, 401)
+
+    def test_messages_endpoint_rejects_unmapped_claude_route(self):
+        cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "apiKey": "secret-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {"sonnet": "deepseek-v4-pro", "default": "deepseek-v4-pro"},
+        })
+        cfg.save_config({**cfg.load_config(), "gatewayApiKey": "local-gateway-key"})
+
+        async def fake_forward_request(_body, _provider, _request_id):
+            return {"unexpected": True}
+
+        with patch("backend.proxy.forward_request", fake_forward_request):
+            response = self.client.post(
+                "/v1/messages",
+                headers={"authorization": "Bearer local-gateway-key"},
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_tokens": 8,
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["type"], "invalid_request_error")
+        self.assertIn("未在 CC Desktop Switch 中映射", response.json()["error"]["message"])
 
     def test_messages_endpoint_returns_upstream_error_status(self):
         cfg.add_provider({
@@ -2310,7 +2586,7 @@ class DesktopTrayControllerTests(unittest.TestCase):
         self.assertIn("Kimi", tray.icon.notifications[0][1])
         restart_dialog.assert_not_called()
 
-    def test_switch_provider_syncs_direct_desktop_policy(self):
+    def test_switch_provider_syncs_local_proxy_desktop_policy(self):
         first = cfg.add_provider({
             "name": "DeepSeek",
             "baseUrl": "https://api.deepseek.com/anthropic",
@@ -2341,11 +2617,11 @@ class DesktopTrayControllerTests(unittest.TestCase):
 
         self.assertEqual(cfg.load_config()["activeProvider"], second["id"])
         self.assertEqual(observed["provider"]["models"]["sonnet"], "kimi-k2.6")
-        self.assertEqual(observed["base_url"], "https://api.moonshot.cn/anthropic")
+        self.assertEqual(observed["base_url"], "http://127.0.0.1:18080")
         self.assertIsNone(observed["providers"])
         self.assertFalse(observed["expose_all"])
         self.assertIn("桌面版配置已同步", tray.icon.notifications[0][1])
-        start_proxy.assert_not_called()
+        start_proxy.assert_called_once_with(18080)
         restart_dialog.assert_not_called()
 
     def test_switch_provider_does_not_show_restart_dialog_when_provider_is_unchanged(self):

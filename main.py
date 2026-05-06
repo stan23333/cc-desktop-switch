@@ -3,6 +3,7 @@
 
 import argparse
 import ctypes
+import json
 import sys
 import threading
 import time
@@ -10,13 +11,14 @@ import traceback
 from pathlib import Path
 import webbrowser
 from urllib.error import URLError
-from urllib.request import urlopen
+from urllib.request import Request as UrlRequest, urlopen
 
 import uvicorn
 
 from backend.main import (
     create_admin_app,
     desktop_config_target_for_provider,
+    register_app_activation_handler,
     register_update_quit_handler,
     _start_proxy_server,
     _stop_proxy_server,
@@ -26,13 +28,16 @@ from backend import registry
 
 
 APP_NAME = "CC Desktop Switch"
-APP_VERSION = "1.0.17"
+APP_VERSION = "1.0.19"
 TRAY_OPEN_LABEL = "打开 CC Desktop Switch"
 TRAY_QUIT_LABEL = "退出"
 _macos_app_delegate = None
+_single_instance_mutex = None
 MB_OK = 0x00000000
 MB_ICONINFORMATION = 0x00000040
 MB_SETFOREGROUND = 0x00010000
+ERROR_ALREADY_EXISTS = 183
+SINGLE_INSTANCE_MUTEX_NAME = "Local\\CCDesktopSwitch.SingleInstance"
 
 
 def safe_print(message: str):
@@ -68,6 +73,74 @@ def show_message_box_async(title: str, message: str):
         args=(title, message),
         daemon=True,
     ).start()
+
+
+def acquire_single_instance_lock() -> bool:
+    """Windows 下创建单实例互斥锁；返回 False 表示已有实例在运行。"""
+    global _single_instance_mutex
+    if sys.platform != "win32":
+        return True
+
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX_NAME)
+        if not handle:
+            safe_print("single instance mutex creation returned empty handle")
+            return True
+        already_running = kernel32.GetLastError() == ERROR_ALREADY_EXISTS
+        if already_running:
+            kernel32.CloseHandle(handle)
+            return False
+        _single_instance_mutex = handle
+        return True
+    except Exception as exc:
+        safe_print(f"single instance mutex failed: {exc}")
+        return True
+
+
+def release_single_instance_lock():
+    """释放单实例互斥锁句柄。"""
+    global _single_instance_mutex
+    if sys.platform != "win32" or not _single_instance_mutex:
+        return
+    try:
+        ctypes.windll.kernel32.CloseHandle(_single_instance_mutex)
+    except Exception as exc:
+        safe_print(f"single instance mutex release failed: {exc}")
+    finally:
+        _single_instance_mutex = None
+
+
+def request_existing_instance_activate(admin_port: int, timeout: float = 3.0) -> bool:
+    """通知已有实例显示窗口；成功唤起时返回 True。"""
+    activate_url = f"http://127.0.0.1:{admin_port}/api/app/activate"
+    deadline = time.time() + max(timeout, 0.0)
+
+    while True:
+        try:
+            request = UrlRequest(
+                activate_url,
+                data=b"{}",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-CCDS-Request": "1",
+                },
+                method="POST",
+            )
+            with urlopen(request, timeout=0.8) as response:
+                status = getattr(response, "status", None)
+                if status is None:
+                    status = response.getcode()
+                raw_body = response.read().decode("utf-8", errors="replace")
+                payload = json.loads(raw_body or "{}")
+                if 200 <= status < 300 and payload.get("success") and payload.get("handled"):
+                    return True
+        except (OSError, URLError, ValueError, json.JSONDecodeError):
+            pass
+
+        if time.time() >= deadline:
+            return False
+        time.sleep(min(0.2, max(0.0, deadline - time.time())))
 
 
 def write_crash_log():
@@ -444,6 +517,17 @@ def open_desktop_window(url: str) -> bool:
                     pass
             tray.quit_app()
 
+        def request_window_activation() -> bool:
+            if sys.platform == "darwin":
+                try:
+                    from PyObjCTools import AppHelper
+                    AppHelper.callAfter(tray.show_window)
+                    return True
+                except Exception:
+                    pass
+            tray.show_window()
+            return True
+
         tray_started = tray.start()
         if tray_started or sys.platform == "darwin":
             window.events.closing += tray.handle_window_closing
@@ -463,6 +547,7 @@ def open_desktop_window(url: str) -> bool:
             ]
 
         register_update_quit_handler(request_quit_for_update)
+        register_app_activation_handler(request_window_activation)
         try:
             if sys.platform == "darwin":
                 webview.start(
@@ -475,6 +560,7 @@ def open_desktop_window(url: str) -> bool:
                 webview.start(debug=False, menu=menu)
         finally:
             register_update_quit_handler(None)
+            register_app_activation_handler(None)
         return True
     except Exception as exc:
         safe_print(f"desktop window failed, fallback to browser: {exc}")
@@ -539,20 +625,31 @@ def main():
     proxy_port = settings.get("proxyPort", 18080)
     auto_start_proxy = settings.get("autoStart", False)
 
-    # 如果开启了自动启动代理
-    if auto_start_proxy:
-        safe_print(f"  自动启动代理 (端口 {proxy_port})...")
-        _start_proxy_server(proxy_port)
+    if not acquire_single_instance_lock():
+        if not request_existing_instance_activate(admin_port):
+            show_message_box(
+                APP_NAME,
+                "CC Desktop Switch 已经在运行。\n\n请从任务栏或系统托盘打开已有窗口。",
+            )
+        return
 
-    # 创建管理后台应用
-    admin_app = create_admin_app()
+    try:
+        # 如果开启了自动启动代理
+        if auto_start_proxy:
+            safe_print(f"  自动启动代理 (端口 {proxy_port})...")
+            _start_proxy_server(proxy_port)
 
-    if args.server_only:
-        run_browser_mode(admin_app, admin_port, open_ui=False)
-    elif args.browser:
-        run_browser_mode(admin_app, admin_port, open_ui=True)
-    else:
-        run_desktop_mode(admin_app, admin_port)
+        # 创建管理后台应用
+        admin_app = create_admin_app()
+
+        if args.server_only:
+            run_browser_mode(admin_app, admin_port, open_ui=False)
+        elif args.browser:
+            run_browser_mode(admin_app, admin_port, open_ui=True)
+        else:
+            run_desktop_mode(admin_app, admin_port)
+    finally:
+        release_single_instance_lock()
 
 
 if __name__ == "__main__":
