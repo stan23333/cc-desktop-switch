@@ -190,6 +190,7 @@ foreach ($pattern in @("*.sha256", "*.sig", "latest.json", "CC-Desktop-Switch-re
 $requiredAssetNames = @(
     "CC-Desktop-Switch-v$Version-Windows-x64.exe",
     "CC-Desktop-Switch-v$Version-Windows-Portable.zip",
+    "CC-Desktop-Switch-v$Version-Windows-Setup.exe",
     "CC-Desktop-Switch-v$Version-macOS-arm64.pkg",
     "CC-Desktop-Switch-v$Version-macOS-arm64.dmg",
     "CC-Desktop-Switch-v$Version-macOS-x64.pkg",
