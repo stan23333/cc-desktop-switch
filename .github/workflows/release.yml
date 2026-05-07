@@ -404,8 +404,13 @@ jobs:
             Set-Content -LiteralPath $notesFile -Value "Release for CC Desktop Switch v$env:RELEASE_VERSION." -Encoding utf8
           }
 
+          $oldEAP = $ErrorActionPreference
+          $ErrorActionPreference = "SilentlyContinue"
           $isDraft = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft --jq ".isDraft" 2>$null
-          if ($LASTEXITCODE -eq 0) {
+          $viewExitCode = $LASTEXITCODE
+          $ErrorActionPreference = $oldEAP
+
+          if ($viewExitCode -eq 0) {
             if ($isDraft.Trim() -ne "true") {
               throw "Release $tag already exists and is not a draft."
             }
@@ -414,8 +419,12 @@ jobs:
             Invoke-Gh release create $tag --repo $env:GITHUB_REPOSITORY --draft --title "CC Desktop Switch $tag" --notes-file $notesFile --verify-tag
           }
 
+          $ErrorActionPreference = "SilentlyContinue"
           $existingAssetsText = gh release view $tag --repo $env:GITHUB_REPOSITORY --json assets --jq ".assets[].name" 2>$null
-          if ($LASTEXITCODE -eq 0) {
+          $assetsExitCode = $LASTEXITCODE
+          $ErrorActionPreference = $oldEAP
+
+          if ($assetsExitCode -eq 0) {
             $existingAssets = $existingAssetsText -split "\r?\n"
             foreach ($asset in $existingAssets) {
               if ($asset) {
