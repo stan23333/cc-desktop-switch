@@ -8,16 +8,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/stan23333/cc-desktop-switch/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/stan23333/cc-desktop-switch?style=social"></a>
-  <a href="LICENSE.txt"><img alt="License" src="https://img.shields.io/github/license/stan23333/cc-desktop-switch"></a>
+  <a href="https://github.com/lonr-6/cc-desktop-switch/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/lonr-6/cc-desktop-switch?style=social"></a>
+  <a href="LICENSE.txt"><img alt="License" src="https://img.shields.io/github/license/lonr-6/cc-desktop-switch"></a>
   <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/Python-3.11%2B-blue?logo=python"></a>
-  <a href="https://github.com/stan23333/cc-desktop-switch/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/stan23333/cc-desktop-switch/total?label=downloads"></a>
+  <a href="https://github.com/lonr-6/cc-desktop-switch/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/lonr-6/cc-desktop-switch/total?label=downloads"></a>
 </p>
-
-> **Fork Notice:** This is a fork of [lonr-6/cc-desktop-switch](https://github.com/lonr-6/cc-desktop-switch) with the following improvements:
->
-> - **Intel macOS support verified**: The existing build scripts already support `x86_64` via `uname -m` auto-detection. This fork confirms the Intel build path works end-to-end.
-> - **Fixed macOS 3P config on fresh machines**: The original `_mac_apply_library_config()` only updated existing `configLibrary` entries. On a clean macOS install where `configLibrary` does not yet exist, the function did nothing and Claude Desktop would never enter 3P mode. This fork creates a new `configLibrary` entry with a generated UUID when none exist.
 
 CC Desktop Switch is a lightweight desktop app for the official Claude Desktop client. It lets you manage third-party Anthropic-compatible API providers such as DeepSeek, Kimi, Zhipu GLM, Alibaba Cloud Bailian, and Xiaomi MiMo, then apply the right Claude Desktop 3P configuration with one click.
 
@@ -70,7 +65,7 @@ Since v1.0.18, Claude Desktop is configured to call the local CC Desktop Switch 
 Get the latest release from:
 
 ```text
-https://github.com/stan23333/cc-desktop-switch/releases/latest
+https://github.com/lonr-6/cc-desktop-switch/releases/latest
 ```
 
 Recommended downloads:
@@ -79,14 +74,6 @@ Recommended downloads:
 - `CC-Desktop-Switch-v<version>-Windows-Portable.zip` for the Windows portable package.
 - `CC-Desktop-Switch-v<version>-macOS-arm64.pkg` for the macOS installer.
 - `CC-Desktop-Switch-v<version>-macOS-arm64.dmg` for the macOS drag-and-drop package.
-
-Intel Mac users can build locally:
-
-```bash
-./macos/build-macos.sh
-```
-
-The script auto-detects `x86_64` and produces `*-macOS-x64.pkg/dmg`. CI release workflows currently only publish `macOS-arm64` assets.
 
 Windows builds are not Authenticode-signed yet, so Windows may show an unknown publisher warning. Release assets include `.sha256`, `.sig`, and the public key for integrity checks.
 
@@ -119,7 +106,7 @@ CC Desktop Switch keeps those real upstream model IDs inside the local gateway a
 ## Development
 
 ```powershell
-git clone https://github.com/stan23333/cc-desktop-switch.git
+git clone https://github.com/lonr-6/cc-desktop-switch.git
 cd cc-desktop-switch
 pip install -r requirements.txt
 python main.py
@@ -166,8 +153,8 @@ GitHub Copilot subscriptions are not directly supported as a provider API in CC 
 
 ## Star History
 
-<a href="https://www.star-history.com/#stan23333/cc-desktop-switch&Date">
-  <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=stan23333/cc-desktop-switch&type=Date">
+<a href="https://www.star-history.com/#lonr-6/cc-desktop-switch&Date">
+  <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=lonr-6/cc-desktop-switch&type=Date">
 </a>
 
 ## Tech Stack
