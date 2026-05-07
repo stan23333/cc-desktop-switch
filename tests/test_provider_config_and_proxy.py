@@ -1999,7 +1999,7 @@ class ReleaseManifestTests(unittest.TestCase):
                 "-StagingDir",
                 str(self.staging),
                 "-Repository",
-                "stan23333/cc-desktop-switch",
+                "lonr-6/cc-desktop-switch",
                 "-KeyDir",
                 str(self.key_dir),
             ],
