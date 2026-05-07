@@ -4,7 +4,7 @@ param(
     [string]$Repository = $env:GITHUB_REPOSITORY,
     [string]$Notes,
     [string]$NotesFile,
-    [string[]]$RequiredPlatforms = @("windows-x64", "macos-arm64"),
+    [string[]]$RequiredPlatforms = @("windows-x64", "macos-arm64", "macos-x64"),
     [string]$KeyDir
 )
 
@@ -152,11 +152,11 @@ function Get-ReleaseNotes {
         if (-not (Test-Path -LiteralPath $NotesFile)) {
             throw "Release notes file not found: $NotesFile"
         }
-        return Get-Content -LiteralPath $NotesFile -Raw -Encoding utf8
+        return [string]::Copy((Get-Content -LiteralPath $NotesFile -Raw -Encoding utf8))
     }
 
     if ($Notes) {
-        return $Notes
+        return [string]::Copy($Notes)
     }
 
     return "Release for CC Desktop Switch v$Version."

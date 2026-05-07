@@ -231,6 +231,91 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build_macos_intel:
+    name: Build macOS x64
+    runs-on: macos-13
+    needs: prepare
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build macOS assets
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          arch="$(uname -m)"
+          if [[ "$arch" != "x86_64" ]]; then
+            echo "Expected macOS x86_64 runner, got: $arch" >&2
+            exit 1
+          fi
+
+          echo "RELEASE_VERSION=$RELEASE_VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_ARCH=x64" >> "$GITHUB_ENV"
+          CCDS_VERSION="$RELEASE_VERSION" ./macos/build-macos.sh
+
+      - name: Smoke test macOS app bundle
+        shell: bash
+        run: |
+          app_exe="dist/mac/CC Desktop Switch.app/Contents/MacOS/CC-Desktop-Switch"
+          if [[ ! -x "$app_exe" ]]; then
+            echo "App executable not found: $app_exe" >&2
+            exit 1
+          fi
+
+          export HOME="$RUNNER_TEMP/ccds-home"
+          mkdir -p "$HOME"
+          "$app_exe" --server-only --port 19081 > "$RUNNER_TEMP/ccds-macos-smoke.log" 2>&1 &
+          app_pid=$!
+          cleanup() {
+            kill "$app_pid" 2>/dev/null || true
+            wait "$app_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ok=0
+          for _ in {1..60}; do
+            if curl -fsS "http://127.0.0.1:19081/api/ready" >/dev/null; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ "$ok" != "1" ]]; then
+            cat "$RUNNER_TEMP/ccds-macos-smoke.log" >&2
+            exit 1
+          fi
+
+      - name: Verify macOS packages
+        shell: bash
+        run: |
+          pkg="dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-x64.pkg"
+          dmg="dist/mac/CC-Desktop-Switch-v${RELEASE_VERSION}-macOS-x64.dmg"
+
+          test -f "$pkg"
+          test -f "$dmg"
+          pkgutil --expand "$pkg" "$RUNNER_TEMP/pkg-expanded"
+          hdiutil verify "$dmg"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-x64
+          path: |
+            dist/mac/CC-Desktop-Switch-v${{ needs.prepare.outputs.version }}-macOS-x64.pkg
+            dist/mac/CC-Desktop-Switch-v${{ needs.prepare.outputs.version }}-macOS-x64.dmg
+          if-no-files-found: error
+          retention-days: 7
+
   publish_release:
     name: Publish release
     runs-on: windows-latest
@@ -238,6 +323,7 @@ jobs:
       - prepare
       - build_windows
       - build_macos
+      - build_macos_intel
 
     steps:
       - name: Checkout
@@ -265,7 +351,7 @@ jobs:
             "-Version", $env:RELEASE_VERSION,
             "-StagingDir", "release-staging",
             "-Repository", $env:GITHUB_REPOSITORY,
-            "-RequiredPlatforms", "windows-x64", "macos-arm64"
+            "-RequiredPlatforms", "windows-x64", "macos-arm64", "macos-x64"
           )
           if (Test-Path -LiteralPath $notesPath) {
             $args += @("-NotesFile", $notesPath)
