@@ -8,6 +8,11 @@ param(
     [string]$KeyDir
 )
 
+# When invoked via powershell -File, comma-separated strings arrive as a single array element
+if ($RequiredPlatforms.Count -eq 1 -and $RequiredPlatforms[0] -match ",") {
+    $RequiredPlatforms = $RequiredPlatforms[0] -split ","
+}
+
 $ErrorActionPreference = "Stop"
 
 function Get-ProjectRoot {
