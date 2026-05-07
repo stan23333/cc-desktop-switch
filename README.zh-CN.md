@@ -8,16 +8,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/stan23333/cc-desktop-switch/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/stan23333/cc-desktop-switch?style=social"></a>
-  <a href="LICENSE.txt"><img alt="License" src="https://img.shields.io/github/license/stan23333/cc-desktop-switch"></a>
+  <a href="https://github.com/lonr-6/cc-desktop-switch/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/lonr-6/cc-desktop-switch?style=social"></a>
+  <a href="LICENSE.txt"><img alt="License" src="https://img.shields.io/github/license/lonr-6/cc-desktop-switch"></a>
   <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/Python-3.11%2B-blue?logo=python"></a>
-  <a href="https://github.com/stan23333/cc-desktop-switch/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/stan23333/cc-desktop-switch/total?label=downloads"></a>
+  <a href="https://github.com/lonr-6/cc-desktop-switch/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/lonr-6/cc-desktop-switch/total?label=downloads"></a>
 </p>
-
-> **Fork 说明：** 本仓库是 [lonr-6/cc-desktop-switch](https://github.com/lonr-6/cc-desktop-switch) 的分支，包含以下改进：
->
-> - **验证 Intel macOS 支持**：现有构建脚本已通过 `uname -m` 自动检测支持 `x86_64`，本分支在 Intel Mac 上完整验证了这一构建路径。
-> - **修复 macOS 全新机器 3P 配置不生效的 bug**：原代码的 `_mac_apply_library_config()` 只更新已有的 `configLibrary` 条目；在全新 macOS 系统上若 `configLibrary` 目录尚不存在，Apply 后 Claude Desktop 永远不会进入 3P 模式。本分支在检测到空目录时主动创建 UUID 条目并写入 `_meta.json`。
 
 CC Desktop Switch 是一个面向 Claude Desktop 官方桌面客户端的轻量配置工具。它可以用桌面界面管理 DeepSeek、Kimi、智谱 GLM、阿里云百炼、小米 MiMo 等第三方 Anthropic 兼容 API 提供商，并一键写入 Claude Desktop 的第三方推理配置。
 
@@ -70,7 +65,7 @@ v1.0.18 起，Claude Desktop 默认会连接 CC Desktop Switch 的本机 gateway
 最新版本在 GitHub Releases：
 
 ```text
-https://github.com/stan23333/cc-desktop-switch/releases/latest
+https://github.com/lonr-6/cc-desktop-switch/releases/latest
 ```
 
 推荐下载：
@@ -79,14 +74,6 @@ https://github.com/stan23333/cc-desktop-switch/releases/latest
 - `CC-Desktop-Switch-v<version>-Windows-Portable.zip`：Windows 便携版
 - `CC-Desktop-Switch-v<version>-macOS-arm64.pkg`：macOS 安装包
 - `CC-Desktop-Switch-v<version>-macOS-arm64.dmg`：macOS 拖拽安装包
-
-Intel Mac 用户可以本地构建：
-
-```bash
-./macos/build-macos.sh
-```
-
-脚本会自动检测 `x86_64` 并产出 `*-macOS-x64.pkg/dmg`。CI Release 工作流目前仅发布 `macOS-arm64` 安装包。
 
 Windows 版暂时没有 Authenticode 代码签名证书，系统可能提示未知发布者。Release 页面提供 `.sha256`、`.sig` 和公钥用于校验完整性。
 
@@ -119,7 +106,7 @@ CC Desktop Switch 会把真实模型 ID 保存在本机 gateway 内部，只向 
 ## 本地开发
 
 ```powershell
-git clone https://github.com/stan23333/cc-desktop-switch.git
+git clone https://github.com/lonr-6/cc-desktop-switch.git
 cd cc-desktop-switch
 pip install -r requirements.txt
 python main.py
@@ -166,8 +153,8 @@ CC Desktop Switch 不直接支持把 GitHub Copilot 订阅账号当作 provider 
 
 ## Star History
 
-<a href="https://www.star-history.com/#stan23333/cc-desktop-switch&Date">
-  <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=stan23333/cc-desktop-switch&type=Date">
+<a href="https://www.star-history.com/#lonr-6/cc-desktop-switch&Date">
+  <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=lonr-6/cc-desktop-switch&type=Date">
 </a>
 
 ## 技术栈
