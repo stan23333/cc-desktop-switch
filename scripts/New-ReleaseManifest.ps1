@@ -152,11 +152,11 @@ function Get-ReleaseNotes {
         if (-not (Test-Path -LiteralPath $NotesFile)) {
             throw "Release notes file not found: $NotesFile"
         }
-        return Get-Content -LiteralPath $NotesFile -Raw -Encoding utf8
+        return [string]::Copy((Get-Content -LiteralPath $NotesFile -Raw -Encoding utf8))
     }
 
     if ($Notes) {
-        return $Notes
+        return [string]::Copy($Notes)
     }
 
     return "Release for CC Desktop Switch v$Version."
