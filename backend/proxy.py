@@ -164,6 +164,11 @@ def map_model(original_model: str, provider: Optional[dict]) -> str:
     if not models_config:
         return original_model
 
+    # 优先检查自定义映射（直接匹配 Claude 模型名）
+    known_keys = {"default", "sonnet", "opus", "haiku", "sonnet_4_6", "sonnet_4_5", "opus_4_7", "opus_4_6", "opus_3", "haiku_4_5"}
+    if original_model in models_config and original_model not in known_keys:
+        return models_config[original_model]
+
     # Claude Desktop 在 gateway 模式可能直接发送 /v1/models 返回的真实模型 ID。
     # 这种情况下必须透传，避免 deepseek-v4-pro[1m] 被 default 覆盖回普通模型。
     if original_model in provider_model_ids(provider):

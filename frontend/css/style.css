@@ -2660,6 +2660,45 @@ body {
   border-top: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
 }
 
+.custom-mapping-section {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 60%, transparent);
+}
+
+.custom-mapping-section h3 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.custom-mapping-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.custom-mapping-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.custom-mapping-row input {
+  flex: 1;
+}
+
+.custom-mapping-arrow {
+  color: var(--muted);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.custom-mapping-empty {
+  padding: 10px 0;
+  font-size: 13px;
+}
+
 .preset-options {
   display: grid;
   gap: 8px;

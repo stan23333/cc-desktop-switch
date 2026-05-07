@@ -64,7 +64,7 @@ def empty_model_mappings() -> dict:
 
 
 def normalize_model_mappings(models: Optional[dict]) -> dict:
-    """把旧四槽位和新多槽位统一成当前结构。"""
+    """把旧四槽位和新多槽位统一成当前结构，保留自定义映射。"""
     normalized = empty_model_mappings()
     if not isinstance(models, dict):
         return normalized
@@ -82,6 +82,13 @@ def normalize_model_mappings(models: Optional[dict]) -> dict:
             if value:
                 normalized[key] = value
                 break
+
+    # 保留自定义映射（非 slot key 的条目）
+    known_keys = set(MODEL_ORDER) | set(LEGACY_MODEL_KEYS)
+    for key, value in source.items():
+        if key not in known_keys and isinstance(value, str) and value.strip():
+            normalized[key] = value.strip()
+
     return normalized
 
 
@@ -106,6 +113,16 @@ def model_mappings_with_legacy_aliases(models: Optional[dict]) -> dict:
         or ""
     )
     return compat
+
+
+def get_custom_model_mappings(models: Optional[dict]) -> dict[str, str]:
+    """提取用户自定义的模型映射（非 slot key 的条目）。"""
+    normalized = normalize_model_mappings(models)
+    known_keys = set(MODEL_ORDER) | set(LEGACY_MODEL_KEYS)
+    return {
+        k: v for k, v in normalized.items()
+        if k not in known_keys and v
+    }
 
 
 def provider_model_ids(provider: Optional[dict]) -> list[str]:
@@ -182,6 +199,11 @@ def desktop_model_entries(provider: Optional[dict], use_alias: bool = False) -> 
         source_model = normalized.get(slot["key"])
         if source_model:
             add_entry(slot["claude_ids"][0], source_model)
+
+    # 自定义映射条目
+    custom = get_custom_model_mappings(raw_models)
+    for route_id, source_model in custom.items():
+        add_entry(route_id, source_model)
 
     return entries
 

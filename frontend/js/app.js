@@ -25,6 +25,7 @@
   let formModelCapabilities = {};
   let formRequestOptions = {};
   let providerFormMappings = {};
+  let providerFormCustomMappings = {};
   let providerFormRows = [...providerFormDefaultRows];
   let providerAvailableModels = [];
   let openProviderSlotMenuIndex = null;
@@ -311,6 +312,13 @@
     normalized.sonnet_4_6 = String(mappings.sonnet_4_6 || mappings.sonnet || "").trim();
     normalized.sonnet_4_5 = String(mappings.sonnet_4_5 || "").trim();
     normalized.haiku_4_5 = String(mappings.haiku_4_5 || mappings.haiku || "").trim();
+    // 保留自定义映射（非 slot key 的条目）
+    const knownKeys = new Set(Object.keys(normalized));
+    for (const [key, value] of Object.entries(mappings)) {
+      if (!knownKeys.has(key) && typeof value === "string" && value.trim()) {
+        normalized[key] = value.trim();
+      }
+    }
     return normalized;
   }
 
@@ -631,7 +639,17 @@
   }
 
   function setProviderMappings(mappings = {}, options = {}) {
-    providerFormMappings = normalizeMappings(mappings);
+    const normalized = normalizeMappings(mappings);
+    const knownKeys = new Set(Object.keys(emptyMappings()));
+    providerFormMappings = {};
+    providerFormCustomMappings = {};
+    for (const [key, value] of Object.entries(normalized)) {
+      if (knownKeys.has(key)) {
+        providerFormMappings[key] = value;
+      } else {
+        providerFormCustomMappings[key] = value;
+      }
+    }
     providerFormRows = formMappingRowsFromMappings(providerFormMappings);
     if (Array.isArray(options.availableModels)) {
       providerAvailableModels = options.availableModels.slice();
@@ -639,6 +657,31 @@
     openProviderSlotMenuIndex = null;
     openProviderModelMenuKey = null;
     renderProviderMappings();
+    renderCustomMappings();
+  }
+
+  function renderCustomMappings() {
+    const container = $("#providerCustomMappingStack");
+    if (!container) return;
+    const entries = Object.entries(providerFormCustomMappings);
+    container.innerHTML = `
+      <div class="custom-mapping-list">
+        ${entries.length === 0 ? `<div class="custom-mapping-empty text-muted">${escapeHtml(t("providersAdd.noCustomMappings") || "暂无自定义映射")}</div>` : ""}
+        ${entries.map(([key, value], index) => `
+          <div class="custom-mapping-row" data-custom-index="${index}">
+            <input class="form-control form-control-sm" data-custom-key="${index}" value="${escapeHtml(key)}" placeholder="${escapeHtml(t("providersAdd.customClaudeModel") || "Claude 模型名")}">
+            <span class="custom-mapping-arrow">→</span>
+            <input class="form-control form-control-sm" data-custom-value="${index}" value="${escapeHtml(value)}" placeholder="${escapeHtml(t("providersAdd.customProviderModel") || "上游模型 ID")}">
+            <button class="btn btn-outline-danger btn-sm" type="button" data-action="remove-custom-mapping" data-custom-index="${index}">
+              <i class="bi bi-trash"></i>
+            </button>
+          </div>
+        `).join("")}
+      </div>
+      <button class="btn btn-outline-primary btn-sm" type="button" data-action="add-custom-mapping">
+        <i class="bi bi-plus-lg"></i><span>${escapeHtml(t("providersAdd.addCustomMapping") || "添加自定义映射")}</span>
+      </button>
+    `;
   }
 
   function updateProviderModelInput(slotKey, value) {
@@ -799,7 +842,15 @@
   }
 
   function collectProviderMappings() {
-    return normalizeMappings(providerFormMappings);
+    const normalized = normalizeMappings(providerFormMappings);
+    for (const [key, value] of Object.entries(providerFormCustomMappings)) {
+      const trimmedKey = key.trim();
+      const trimmedValue = value.trim();
+      if (trimmedKey && trimmedValue) {
+        normalized[trimmedKey] = trimmedValue;
+      }
+    }
+    return normalized;
   }
 
   function providerPayloadFromForm(includeModels = true) {
@@ -1789,6 +1840,21 @@
         removeProviderMappingRow(Number(actionEl.dataset.rowIndex));
       }
 
+      if (action === "add-custom-mapping") {
+        const entries = Object.entries(providerFormCustomMappings);
+        entries.push(["", ""]);
+        providerFormCustomMappings = Object.fromEntries(entries);
+        renderCustomMappings();
+      }
+
+      if (action === "remove-custom-mapping") {
+        const index = Number(actionEl.dataset.customIndex);
+        const entries = Object.entries(providerFormCustomMappings);
+        entries.splice(index, 1);
+        providerFormCustomMappings = Object.fromEntries(entries);
+        renderCustomMappings();
+      }
+
       if (action === "check-model") {
         const rowKey = actionEl.dataset.rowKey;
         const model = providerFormMappings[rowKey] || "";
@@ -2205,6 +2271,24 @@
       if (mappingInput) {
         updateProviderModelInput(mappingInput.dataset.providerModelInput, mappingInput.value);
         renderPresetOptions(selectedPreset, collectProviderMappings());
+      }
+      const customKeyInput = event.target.closest("[data-custom-key]");
+      if (customKeyInput) {
+        const index = Number(customKeyInput.dataset.customKey);
+        const entries = Object.entries(providerFormCustomMappings);
+        if (entries[index]) {
+          entries[index][0] = customKeyInput.value;
+          providerFormCustomMappings = Object.fromEntries(entries);
+        }
+      }
+      const customValueInput = event.target.closest("[data-custom-value]");
+      if (customValueInput) {
+        const index = Number(customValueInput.dataset.customValue);
+        const entries = Object.entries(providerFormCustomMappings);
+        if (entries[index]) {
+          entries[index][1] = customValueInput.value;
+          providerFormCustomMappings = Object.fromEntries(entries);
+        }
       }
       if (event.target.id === "providerBaseUrl") {
         renderBaseUrlOptions();

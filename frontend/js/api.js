@@ -86,6 +86,13 @@
 
   function mapProvider(provider, activeId) {
     const models = provider.models || {};
+    const knownKeys = new Set(['default', 'opus', 'opus_4_7', 'opus_4_6', 'opus_3', 'sonnet', 'sonnet_4_6', 'sonnet_4_5', 'haiku', 'haiku_4_5']);
+    const customMappings = {};
+    for (const [key, value] of Object.entries(models)) {
+      if (!knownKeys.has(key) && typeof value === 'string' && value.trim()) {
+        customMappings[key] = value.trim();
+      }
+    }
     return {
       id: provider.id,
       name: provider.name,
@@ -106,6 +113,7 @@
         sonnet_4_6: models.sonnet_4_6 || models.sonnet || '',
         sonnet_4_5: models.sonnet_4_5 || '',
         haiku_4_5: models.haiku_4_5 || models.haiku || '',
+        ...customMappings,
       },
       ...computeIcon(provider),
     };
