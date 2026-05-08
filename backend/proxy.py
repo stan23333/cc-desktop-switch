@@ -21,6 +21,7 @@ from backend.api_adapters import (
 )
 from backend.model_alias import (
     all_provider_model_entries,
+    custom_model_mappings,
     desktop_model_entries,
     desktop_route_ids,
     model_mappings_with_legacy_aliases,
@@ -163,6 +164,10 @@ def map_model(original_model: str, provider: Optional[dict]) -> str:
     models_config = model_mappings_with_legacy_aliases(provider.get("models", {}))
     if not models_config:
         return original_model
+
+    custom_models = custom_model_mappings(provider.get("models", {}))
+    if original_model in custom_models:
+        return custom_models[original_model]
 
     # Claude Desktop 在 gateway 模式可能直接发送 /v1/models 返回的真实模型 ID。
     # 这种情况下必须透传，避免 deepseek-v4-pro[1m] 被 default 覆盖回普通模型。

@@ -25,6 +25,7 @@
   let formModelCapabilities = {};
   let formRequestOptions = {};
   let providerFormMappings = {};
+  let providerFormCustomMappings = [];
   let providerFormRows = [...providerFormDefaultRows];
   let providerAvailableModels = [];
   let openProviderSlotMenuIndex = null;
@@ -311,7 +312,26 @@
     normalized.sonnet_4_6 = String(mappings.sonnet_4_6 || mappings.sonnet || "").trim();
     normalized.sonnet_4_5 = String(mappings.sonnet_4_5 || "").trim();
     normalized.haiku_4_5 = String(mappings.haiku_4_5 || mappings.haiku || "").trim();
+    const knownKeys = new Set(Object.keys(normalized));
+    for (const [key, value] of Object.entries(mappings)) {
+      const route = String(key || "").trim();
+      const model = String(value || "").trim();
+      if (!knownKeys.has(route) && isSafeCustomRoute(route) && model) {
+        normalized[route] = model;
+      }
+    }
     return normalized;
+  }
+
+  function isSafeCustomRoute(route) {
+    return /^claude-[A-Za-z0-9][A-Za-z0-9._-]*$/.test(String(route || "").trim());
+  }
+
+  function splitCustomMappings(mappings = {}) {
+    const knownKeys = new Set(Object.keys(emptyMappings()));
+    return Object.entries(mappings || {})
+      .filter(([key, value]) => !knownKeys.has(key) && isSafeCustomRoute(key) && String(value || "").trim())
+      .map(([route, model]) => ({ route: String(route).trim(), model: String(model).trim() }));
   }
 
   function normalizeCapabilities(capabilities = {}) {
@@ -549,7 +569,7 @@
   }
 
   function formMappingMarkup() {
-    return providerFormRows.map((rowKey, index) => {
+    const slotRows = providerFormRows.map((rowKey, index) => {
       const slot = slotByKey(rowKey);
       const isRequired = rowKey === "default";
       const currentProviderModel = providerFormMappings[rowKey] || "";
@@ -603,7 +623,78 @@
           </div>
         </article>
       `;
-    }).join("");
+    });
+    return slotRows.join("");
+  }
+
+  function customMappingMarkup() {
+    if (!providerFormCustomMappings.length) return "";
+    return `
+      <div class="provider-mapping-custom">
+        <div class="provider-mapping-group-label">${escapeHtml(t("providersAdd.customMappingGroup"))}</div>
+        <div class="provider-mapping-list">
+          ${providerFormCustomMappings.map((mapping, index) => {
+            const rowKey = `custom:${index}`;
+            const route = mapping.route || "";
+            const currentProviderModel = mapping.model || "";
+            const canCheck = !!currentProviderModel && !!editingProviderId;
+            return `
+              <article class="form-mapping-row">
+                <div class="form-mapping-left">
+                  <label class="form-label visually-hidden" for="providerCustomRoute-${index}">${t("providersAdd.customClaudeModel")}</label>
+                  <div class="mapping-select-wrap">
+                    <span class="mapping-icon custom"><i class="bi bi-plus-circle"></i></span>
+                    <input
+                      class="form-control mapping-route-input"
+                      id="providerCustomRoute-${index}"
+                      data-custom-route-input="${index}"
+                      value="${escapeHtml(route)}"
+                      placeholder="${escapeHtml(t("providersAdd.customClaudeModel"))}"
+                      pattern="claude-[A-Za-z0-9][A-Za-z0-9._-]*"
+                    >
+                  </div>
+                </div>
+                <div class="form-mapping-right">
+                  <label class="form-label visually-hidden" for="providerCustomValue-${index}">${t("providersAdd.providerModel")}</label>
+                  <div class="provider-model-input-wrap ${openProviderModelMenuKey === rowKey ? "open" : ""}">
+                    <input
+                      class="form-control provider-model-input"
+                      id="providerCustomValue-${index}"
+                      data-custom-model-input="${index}"
+                      value="${escapeHtml(currentProviderModel)}"
+                      placeholder="${escapeHtml(t("providersAdd.providerModelPlaceholder"))}"
+                    >
+                    <button
+                      class="provider-model-trigger"
+                      type="button"
+                      data-action="toggle-provider-model-menu"
+                      data-row-key="${escapeHtml(rowKey)}"
+                      ${providerAvailableModels.length ? "" : "disabled"}
+                      aria-haspopup="listbox"
+                      aria-expanded="${providerAvailableModels.length && openProviderModelMenuKey === rowKey ? "true" : "false"}"
+                      aria-label="${escapeHtml(t("providersAdd.providerModel"))}"
+                    >
+                      <i class="bi bi-chevron-down" aria-hidden="true"></i>
+                    </button>
+                    ${providerAvailableModels.length ? `
+                      <div class="mapping-slot-menu provider-model-menu" role="listbox" aria-labelledby="providerCustomValue-${index}">
+                        ${providerModelOptionsMarkup(currentProviderModel)}
+                      </div>
+                    ` : ""}
+                  </div>
+                </div>
+                <div class="form-mapping-actions">
+                  ${canCheck
+                    ? `<button class="btn btn-outline-primary btn-sm mapping-check-button" type="button" data-action="check-model" data-row-key="${escapeHtml(rowKey)}" aria-label="${escapeHtml(t("providersAdd.checkModel"))}">${escapeHtml(t("providersAdd.checkModel"))}</button>`
+                    : '<span class="mapping-check-placeholder" aria-hidden="true"></span>'}
+                  <button class="btn btn-outline-danger btn-sm mapping-remove-button" type="button" data-action="remove-custom-model-row" data-row-index="${index}" aria-label="${escapeHtml(t("providersAdd.removeMapping"))}">${escapeHtml(t("providersAdd.removeMapping"))}</button>
+                </div>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      </div>
+    `;
   }
 
   function renderProviderMappings() {
@@ -621,9 +712,13 @@
         <div class="provider-mapping-list">
           ${formMappingMarkup()}
         </div>
+        ${customMappingMarkup()}
         <div class="provider-mapping-footer">
           <button class="btn btn-outline-primary btn-sm" type="button" data-action="add-provider-model-row" ${canAddMoreRows ? "" : "disabled"}>
             <i class="bi bi-plus-lg"></i><span>${escapeHtml(t("providersAdd.addMapping"))}</span>
+          </button>
+          <button class="btn btn-outline-primary btn-sm" type="button" data-action="add-custom-model-row">
+            <i class="bi bi-plus-circle"></i><span>${escapeHtml(t("providersAdd.addCustomMapping"))}</span>
           </button>
         </div>
       </div>
@@ -631,7 +726,9 @@
   }
 
   function setProviderMappings(mappings = {}, options = {}) {
-    providerFormMappings = normalizeMappings(mappings);
+    const normalized = normalizeMappings(mappings);
+    providerFormMappings = Object.fromEntries(Object.entries(normalized).filter(([key]) => Object.prototype.hasOwnProperty.call(emptyMappings(), key)));
+    providerFormCustomMappings = splitCustomMappings(normalized);
     providerFormRows = formMappingRowsFromMappings(providerFormMappings);
     if (Array.isArray(options.availableModels)) {
       providerAvailableModels = options.availableModels.slice();
@@ -642,7 +739,19 @@
   }
 
   function updateProviderModelInput(slotKey, value) {
+    if (String(slotKey || "").startsWith("custom:")) {
+      const index = Number(String(slotKey).slice("custom:".length));
+      if (providerFormCustomMappings[index]) {
+        providerFormCustomMappings[index].model = value.trim();
+      }
+      return;
+    }
     providerFormMappings[slotKey] = value.trim();
+  }
+
+  function updateCustomRouteInput(index, value) {
+    if (!providerFormCustomMappings[index]) return;
+    providerFormCustomMappings[index].route = value.trim();
   }
 
   function moveProviderMappingRow(index, nextKey) {
@@ -678,6 +787,18 @@
     providerFormMappings[key] = "";
     openProviderSlotMenuIndex = null;
     if (openProviderModelMenuKey === key) openProviderModelMenuKey = null;
+    renderProviderMappings();
+  }
+
+  function addCustomMappingRow() {
+    providerFormCustomMappings = [...providerFormCustomMappings, { route: "", model: "" }];
+    openProviderModelMenuKey = null;
+    renderProviderMappings();
+  }
+
+  function removeCustomMappingRow(index) {
+    providerFormCustomMappings = providerFormCustomMappings.filter((_, rowIndex) => rowIndex !== index);
+    openProviderModelMenuKey = null;
     renderProviderMappings();
   }
 
@@ -799,7 +920,19 @@
   }
 
   function collectProviderMappings() {
-    return normalizeMappings(providerFormMappings);
+    const normalized = normalizeMappings(providerFormMappings);
+    for (const mapping of providerFormCustomMappings) {
+      const route = String(mapping.route || "").trim();
+      const model = String(mapping.model || "").trim();
+      if (!route && !model) continue;
+      if (!isSafeCustomRoute(route)) {
+        throw new Error(t("providersAdd.customMappingInvalid"));
+      }
+      if (model) {
+        normalized[route] = model;
+      }
+    }
+    return normalized;
   }
 
   function providerPayloadFromForm(includeModels = true) {
@@ -1789,9 +1922,19 @@
         removeProviderMappingRow(Number(actionEl.dataset.rowIndex));
       }
 
+      if (action === "add-custom-model-row") {
+        addCustomMappingRow();
+      }
+
+      if (action === "remove-custom-model-row") {
+        removeCustomMappingRow(Number(actionEl.dataset.rowIndex));
+      }
+
       if (action === "check-model") {
         const rowKey = actionEl.dataset.rowKey;
-        const model = providerFormMappings[rowKey] || "";
+        const model = String(rowKey || "").startsWith("custom:")
+          ? providerFormCustomMappings[Number(rowKey.slice("custom:".length))]?.model || ""
+          : providerFormMappings[rowKey] || "";
         if (!model || !editingProviderId) return;
         actionEl.disabled = true;
         actionEl.innerHTML = `<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>`;
@@ -2206,6 +2349,14 @@
         updateProviderModelInput(mappingInput.dataset.providerModelInput, mappingInput.value);
         renderPresetOptions(selectedPreset, collectProviderMappings());
       }
+      const customRouteInput = event.target.closest("[data-custom-route-input]");
+      if (customRouteInput) {
+        updateCustomRouteInput(Number(customRouteInput.dataset.customRouteInput), customRouteInput.value);
+      }
+      const customModelInput = event.target.closest("[data-custom-model-input]");
+      if (customModelInput) {
+        updateProviderModelInput(`custom:${customModelInput.dataset.customModelInput}`, customModelInput.value);
+      }
       if (event.target.id === "providerBaseUrl") {
         renderBaseUrlOptions();
       }
@@ -2222,8 +2373,17 @@
         updateDetectFormatButton();
       }
       const mappingInput = event.target.closest("[data-provider-model-input]");
-      if (!mappingInput) return;
-      updateProviderModelInput(mappingInput.dataset.providerModelInput, mappingInput.value);
+      if (mappingInput) {
+        updateProviderModelInput(mappingInput.dataset.providerModelInput, mappingInput.value);
+      }
+      const customRouteInput = event.target.closest("[data-custom-route-input]");
+      if (customRouteInput) {
+        updateCustomRouteInput(Number(customRouteInput.dataset.customRouteInput), customRouteInput.value);
+      }
+      const customModelInput = event.target.closest("[data-custom-model-input]");
+      if (customModelInput) {
+        updateProviderModelInput(`custom:${customModelInput.dataset.customModelInput}`, customModelInput.value);
+      }
     });
 
     document.addEventListener("keydown", (event) => {

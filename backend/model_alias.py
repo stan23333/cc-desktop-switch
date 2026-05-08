@@ -47,6 +47,8 @@ MODEL_SLOTS = (
 MODEL_ORDER = tuple(item["key"] for item in MODEL_SLOTS)
 DEFAULT_MODEL_KEY = "default"
 LEGACY_MODEL_KEYS = ("default", "sonnet", "opus", "haiku")
+MODEL_MAPPING_KEYS = set(MODEL_ORDER) | set(LEGACY_MODEL_KEYS)
+CUSTOM_ROUTE_RE = re.compile(r"^claude-[A-Za-z0-9][A-Za-z0-9._-]*$")
 CLAUDE_ID_TO_SLOT = {
     claude_id.lower(): slot["key"]
     for slot in MODEL_SLOTS
@@ -63,8 +65,14 @@ def empty_model_mappings() -> dict:
     return {key: "" for key in MODEL_ORDER}
 
 
+def is_safe_custom_route_id(route_id: str) -> bool:
+    """Only claude-* route names are safe to expose to Claude Desktop."""
+    route_id = str(route_id or "").strip()
+    return bool(CUSTOM_ROUTE_RE.fullmatch(route_id))
+
+
 def normalize_model_mappings(models: Optional[dict]) -> dict:
-    """把旧四槽位和新多槽位统一成当前结构。"""
+    """把旧四槽位和新多槽位统一成当前结构，保留安全的自定义 Claude route。"""
     normalized = empty_model_mappings()
     if not isinstance(models, dict):
         return normalized
@@ -82,7 +90,23 @@ def normalize_model_mappings(models: Optional[dict]) -> dict:
             if value:
                 normalized[key] = value
                 break
+
+    for key, value in source.items():
+        route_id = str(key or "").strip()
+        source_model = str(value or "").strip()
+        if route_id not in MODEL_MAPPING_KEYS and is_safe_custom_route_id(route_id) and source_model:
+            normalized[route_id] = source_model
     return normalized
+
+
+def custom_model_mappings(models: Optional[dict]) -> dict[str, str]:
+    """返回安全的自定义 Claude route -> 上游模型映射。"""
+    normalized = normalize_model_mappings(models)
+    return {
+        key: value
+        for key, value in normalized.items()
+        if key not in MODEL_MAPPING_KEYS and is_safe_custom_route_id(key) and value
+    }
 
 
 def model_mappings_with_legacy_aliases(models: Optional[dict]) -> dict:
@@ -116,6 +140,10 @@ def provider_model_ids(provider: Optional[dict]) -> list[str]:
     ordered: list[str] = []
     for key in MODEL_ORDER:
         model_id = str(models.get(key) or "").strip()
+        if model_id and model_id not in ordered:
+            ordered.append(model_id)
+    for model_id in custom_model_mappings(provider.get("models") or {}).values():
+        model_id = str(model_id or "").strip()
         if model_id and model_id not in ordered:
             ordered.append(model_id)
     return ordered
@@ -182,6 +210,9 @@ def desktop_model_entries(provider: Optional[dict], use_alias: bool = False) -> 
         source_model = normalized.get(slot["key"])
         if source_model:
             add_entry(slot["claude_ids"][0], source_model)
+
+    for route_id, source_model in custom_model_mappings(raw_models).items():
+        add_entry(route_id, source_model)
 
     return entries
 

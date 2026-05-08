@@ -2595,15 +2595,30 @@ body {
 }
 
 .mapping-slot-trigger,
-.form-mapping-right .form-control {
+.form-mapping-right .form-control,
+.mapping-route-input {
   min-height: 42px;
   font-size: 14px;
+}
+
+.mapping-route-input {
+  padding-left: 44px;
 }
 
 .provider-model-input {
   width: 100%;
   min-height: 42px;
   padding-right: 48px;
+}
+
+.provider-mapping-group-label {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .provider-model-trigger {

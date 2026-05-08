@@ -792,6 +792,30 @@ class ProviderConfigTests(unittest.TestCase):
             "deepseek-v4-flash",
         )
 
+    def test_custom_model_mappings_only_expose_safe_claude_routes(self):
+        provider = {
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "models": {
+                "sonnet": "deepseek-v4-pro",
+                "claude-haiku-4-5-20251001": "deepseek-v4-flash",
+                "deepseek-v4-pro": "deepseek-v4-pro",
+            },
+        }
+
+        desktop_models = registry.provider_inference_models(provider)
+        names = {item["name"] for item in desktop_models}
+        self.assertIn("claude-sonnet-4-6", names)
+        self.assertIn("claude-haiku-4-5-20251001", names)
+        self.assertNotIn("deepseek-v4-pro", names)
+        self.assertEqual(map_model("claude-haiku-4-5-20251001", provider), "deepseek-v4-flash")
+        self.assertEqual(map_model("deepseek-v4-pro", provider), "deepseek-v4-pro")
+
+        inference_models = json.loads(registry.serialize_inference_models(provider))
+        inference_model_names = [item["name"] for item in inference_models]
+        self.assertIn("claude-haiku-4-5-20251001", inference_model_names)
+        self.assertNotIn("deepseek-v4-pro", inference_model_names)
+
     def test_settings_fall_back_to_default_update_url(self):
         config = copy.deepcopy(cfg.DEFAULT_CONFIG)
         config["settings"]["updateUrl"] = ""
@@ -2293,6 +2317,18 @@ class ProxyConversionTests(unittest.TestCase):
         self.assertEqual(map_model("claude-haiku-4-5", provider), "deepseek-v4-flash")
         self.assertEqual(map_model("claude-sonnet-4-5", provider), "claude-sonnet-4-5")
 
+    def test_map_model_routes_safe_custom_claude_model_names(self):
+        provider = {
+            "models": {
+                "default": "deepseek-v4-pro",
+                "claude-haiku-4-5-20251001": "deepseek-v4-flash",
+                "deepseek-v4-pro": "should-not-be-used",
+            }
+        }
+
+        self.assertEqual(map_model("claude-haiku-4-5-20251001", provider), "deepseek-v4-flash")
+        self.assertEqual(map_model("deepseek-v4-pro", provider), "deepseek-v4-pro")
+
     def test_gateway_models_response_exposes_safe_route_model_ids(self):
         provider = {
             "models": {
@@ -2313,6 +2349,22 @@ class ProxyConversionTests(unittest.TestCase):
         self.assertNotIn("claude-sonnet-4-5", ids)
         self.assertNotIn("deepseek-v4-pro", ids)
         self.assertNotIn("deepseek-v4-flash", ids)
+
+    def test_gateway_models_response_includes_safe_custom_routes_only(self):
+        provider = {
+            "models": {
+                "sonnet": "deepseek-v4-pro",
+                "claude-haiku-4-5-20251001": "deepseek-v4-flash",
+                "deepseek-v4-pro": "deepseek-v4-pro",
+            }
+        }
+
+        response = gateway_models_response(provider)
+        ids = [item["id"] for item in response["data"]]
+
+        self.assertIn("claude-sonnet-4-6", ids)
+        self.assertIn("claude-haiku-4-5-20251001", ids)
+        self.assertNotIn("deepseek-v4-pro", ids)
 
     def test_deepseek_request_options_force_max_effort_and_keep_thinking(self):
         provider = {
@@ -2743,6 +2795,28 @@ class ProxyAppTests(unittest.TestCase):
         ids = [item["id"] for item in allowed.json()["data"]]
         self.assertIn("claude-sonnet-4-6", ids)
         self.assertNotIn("deepseek-v4-pro[1m]", ids)
+
+    def test_models_endpoint_returns_safe_custom_routes_only(self):
+        cfg.add_provider({
+            "name": "DeepSeek",
+            "baseUrl": "https://api.deepseek.com/anthropic",
+            "apiKey": "secret-key",
+            "authScheme": "bearer",
+            "apiFormat": "anthropic",
+            "models": {
+                "sonnet": "deepseek-v4-pro",
+                "claude-haiku-4-5-20251001": "deepseek-v4-flash",
+                "deepseek-v4-pro": "deepseek-v4-pro",
+            },
+        })
+        cfg.save_config({**cfg.load_config(), "gatewayApiKey": "local-gateway-key"})
+
+        response = self.client.get("/v1/models", headers={"authorization": "Bearer local-gateway-key"})
+
+        self.assertEqual(response.status_code, 200)
+        ids = [item["id"] for item in response.json()["data"]]
+        self.assertIn("claude-haiku-4-5-20251001", ids)
+        self.assertNotIn("deepseek-v4-pro", ids)
 
     def test_models_endpoint_keeps_active_models_when_all_models_setting_is_hidden(self):
         cfg.add_provider({
@@ -3192,6 +3266,7 @@ class StaticFrontendTests(unittest.TestCase):
     def test_model_mapping_is_integrated_into_provider_form(self):
         html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")
         app_js = (self.root / "frontend" / "js" / "app.js").read_text(encoding="utf-8")
+        i18n = (self.root / "frontend" / "js" / "i18n.js").read_text(encoding="utf-8")
 
         self.assertNotIn('href="#models"', html)
         self.assertNotIn('data-page="models"', html)
@@ -3205,6 +3280,12 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn('fetchProviderModelsPayload', app_js)
         self.assertIn('presetCache', app_js)
         self.assertIn('data-preset-model-option', app_js)
+        self.assertIn('data-action="add-custom-model-row"', app_js)
+        self.assertIn('data-action="remove-custom-model-row"', app_js)
+        self.assertIn('data-custom-route-input', app_js)
+        self.assertIn('mapping-route-input', app_js)
+        self.assertIn('providersAdd.customMappingGroup', app_js + i18n)
+        self.assertIn('isSafeCustomRoute', app_js)
 
     def test_desktop_copy_uses_plain_desktop_language(self):
         html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")
