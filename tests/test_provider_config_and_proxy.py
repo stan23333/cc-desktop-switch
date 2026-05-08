@@ -3286,6 +3286,7 @@ class StaticFrontendTests(unittest.TestCase):
         self.assertIn('mapping-route-input', app_js)
         self.assertIn('providersAdd.customMappingGroup', app_js + i18n)
         self.assertIn('isSafeCustomRoute', app_js)
+        self.assertIn('String(openProviderModelMenuKey).match(/^custom:', app_js)
 
     def test_desktop_copy_uses_plain_desktop_language(self):
         html = (self.root / "frontend" / "index.html").read_text(encoding="utf-8")

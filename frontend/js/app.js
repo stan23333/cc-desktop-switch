@@ -703,8 +703,12 @@
     if (openProviderSlotMenuIndex !== null && !providerFormRows[openProviderSlotMenuIndex]) {
       openProviderSlotMenuIndex = null;
     }
-    if (openProviderModelMenuKey !== null && !providerFormRows.includes(openProviderModelMenuKey)) {
-      openProviderModelMenuKey = null;
+    if (openProviderModelMenuKey !== null) {
+      const customMatch = String(openProviderModelMenuKey).match(/^custom:(\d+)$/);
+      const hasCustomRow = customMatch && providerFormCustomMappings[Number(customMatch[1])];
+      if (!hasCustomRow && !providerFormRows.includes(openProviderModelMenuKey)) {
+        openProviderModelMenuKey = null;
+      }
     }
     const canAddMoreRows = providerFormModelSlots.some((slot) => !providerFormRows.includes(slot.key));
     stack.innerHTML = `
