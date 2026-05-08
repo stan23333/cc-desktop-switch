@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import uuid
 from typing import Optional
 
 from backend.model_alias import all_provider_model_entries, desktop_model_entries
@@ -623,7 +624,14 @@ def _mac_apply_library_config(
     if not ok:
         return {"success": False, "message": f"configLibrary 元数据读取失败: {message}"}
     if not paths:
-        return {"success": True, "message": "configLibrary 不存在，无需写入"}
+        library_dir = _mac_config_library_dir_path()
+        os.makedirs(library_dir, exist_ok=True)
+        entry_id = str(uuid.uuid4())
+        meta = {"appliedId": entry_id}
+        ok, message = _mac_write_json_file(_mac_config_library_meta_path(), meta)
+        if not ok:
+            return {"success": False, "message": f"configLibrary 元数据写入失败: {message}"}
+        paths = [_mac_config_library_entry_path(entry_id)]
 
     expected = _mac_json_enterprise_config(
         base_url,
