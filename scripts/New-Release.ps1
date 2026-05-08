@@ -87,7 +87,9 @@ function Get-Makensis {
     if ($cmd) { return $cmd.Source }
     $candidates = @(
         "C:\Program Files (x86)\NSIS\makensis.exe",
-        "C:\Program Files\NSIS\makensis.exe"
+        "C:\Program Files\NSIS\makensis.exe",
+        "C:\ProgramData\chocolatey\bin\makensis.exe",
+        "C:\ProgramData\chocolatey\lib\nsis\tools\NSIS\makensis.exe"
     )
     foreach ($candidate in $candidates) {
         if (Test-Path -LiteralPath $candidate) { return $candidate }

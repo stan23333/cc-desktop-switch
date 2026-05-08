@@ -1981,6 +1981,8 @@ class ReleaseManifestTests(unittest.TestCase):
         for name in (
             f"CC-Desktop-Switch-v{self.VERSION}-macOS-arm64.pkg",
             f"CC-Desktop-Switch-v{self.VERSION}-macOS-arm64.dmg",
+            f"CC-Desktop-Switch-v{self.VERSION}-macOS-x64.pkg",
+            f"CC-Desktop-Switch-v{self.VERSION}-macOS-x64.dmg",
         ):
             self._touch_asset(name)
 
@@ -2031,6 +2033,7 @@ class ReleaseManifestTests(unittest.TestCase):
         self.assertEqual(latest["version"], self.VERSION)
         self.assertIn("windows-x64", latest["platforms"])
         self.assertIn("macos-arm64", latest["platforms"])
+        self.assertIn("macos-x64", latest["platforms"])
         self.assertTrue((self.staging / "latest.json.sha256").exists())
         self.assertTrue((self.staging / "latest.json.sig").exists())
         self.assertTrue((self.staging / "CC-Desktop-Switch-release-public.pem").exists())
@@ -2040,6 +2043,8 @@ class ReleaseManifestTests(unittest.TestCase):
             f"CC-Desktop-Switch-v{self.VERSION}-Windows-Setup.exe",
             f"CC-Desktop-Switch-v{self.VERSION}-macOS-arm64.pkg",
             f"CC-Desktop-Switch-v{self.VERSION}-macOS-arm64.dmg",
+            f"CC-Desktop-Switch-v{self.VERSION}-macOS-x64.pkg",
+            f"CC-Desktop-Switch-v{self.VERSION}-macOS-x64.dmg",
         ):
             self.assertTrue((self.staging / f"{asset}.sha256").exists(), asset)
             self.assertTrue((self.staging / f"{asset}.sig").exists(), asset)
@@ -2050,7 +2055,11 @@ class ReleaseManifestTests(unittest.TestCase):
         installer = (self.root / "installer.nsi").read_text(encoding="utf-8")
 
         self.assertIn('tag_sha="$(git rev-list -n 1 "$tag")"', workflow)
-        self.assertGreaterEqual(workflow.count("ref: ${{ needs.prepare.outputs.tag }}"), 3)
+        self.assertGreaterEqual(workflow.count("ref: ${{ needs.prepare.outputs.tag }}"), 4)
+        self.assertIn("build_macos_intel:", workflow)
+        self.assertIn("runs-on: macos-15-intel", workflow)
+        self.assertIn("macOS-x64.pkg", workflow)
+        self.assertIn("macOS-x64.dmg", workflow)
         self.assertIn("release delete-asset", workflow)
         self.assertIn('"/DPRODUCT_VERSION=$Version"', new_release)
         self.assertIn("!ifndef PRODUCT_VERSION", installer)

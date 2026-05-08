@@ -4,9 +4,14 @@ param(
     [string]$Repository = $env:GITHUB_REPOSITORY,
     [string]$Notes,
     [string]$NotesFile,
-    [string[]]$RequiredPlatforms = @("windows-x64", "macos-arm64"),
+    [string[]]$RequiredPlatforms = @("windows-x64", "macos-arm64", "macos-x64"),
     [string]$KeyDir
 )
+
+# When invoked via powershell -File, comma-separated strings arrive as a single array element.
+if ($RequiredPlatforms.Count -eq 1 -and $RequiredPlatforms[0] -match ",") {
+    $RequiredPlatforms = $RequiredPlatforms[0] -split ","
+}
 
 $ErrorActionPreference = "Stop"
 
@@ -187,7 +192,9 @@ $requiredAssetNames = @(
     "CC-Desktop-Switch-v$Version-Windows-Portable.zip",
     "CC-Desktop-Switch-v$Version-Windows-Setup.exe",
     "CC-Desktop-Switch-v$Version-macOS-arm64.pkg",
-    "CC-Desktop-Switch-v$Version-macOS-arm64.dmg"
+    "CC-Desktop-Switch-v$Version-macOS-arm64.dmg",
+    "CC-Desktop-Switch-v$Version-macOS-x64.pkg",
+    "CC-Desktop-Switch-v$Version-macOS-x64.dmg"
 )
 
 foreach ($assetName in $requiredAssetNames) {
